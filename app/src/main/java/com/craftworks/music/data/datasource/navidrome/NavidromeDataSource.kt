@@ -120,14 +120,16 @@ class NavidromeDataSource @Inject constructor() {
     private suspend fun getRequest(
         endpoint: String,
         musicFolderIds: List<Int>? = null,
-        ignoreCachedResponse: Boolean = false
+        ignoreCachedResponse: Boolean = false,
+        retryCount: Int = 0
     ): List<Any> = withContext(Dispatchers.IO) {
         val server = NavidromeManager.getCurrentServer() ?: return@withContext emptyList()
+        val baseUrl = NavidromeManager.resolveActiveServerUrl(server)
 
         val salt = generateSalt(8)
         val token = md5Hash(server.password + salt)
 
-        val url = URLBuilder("${server.url}/rest/${endpoint.replace(" ", "%20")}").apply {
+        val url = URLBuilder("${baseUrl}/rest/${endpoint.replace(" ", "%20")}").apply {
             parameters.append("u", server.username)
             parameters.append("t", token)
             parameters.append("s", salt)
@@ -162,41 +164,50 @@ class NavidromeDataSource @Inject constructor() {
                 endpoint.startsWith("ping")         -> parsedData.addAll(parseNavidromeStatus(responseContent))
                 endpoint.startsWith("getMusicFolders") -> parsedData.addAll(parseNavidromeLibrariesJSON(responseContent))
 
-                endpoint.startsWith("search3")      -> parsedData.addAll(parseNavidromeSearch3JSON(responseContent, server.url, server.username, server.password))
+                endpoint.startsWith("search3")      -> parsedData.addAll(parseNavidromeSearch3JSON(responseContent, baseUrl, server.username, server.password))
 
-                endpoint.startsWith("getAlbumList") -> parsedData.addAll(parseNavidromeAlbumListJSON(responseContent, server.url, server.username, server.password))
-                endpoint.startsWith("getAlbum.")    -> parsedData.addAll(parseNavidromeAlbumJSON(responseContent, server.url, server.username, server.password)) // Note: getAlbum.view takes an album ID, typically not musicFolderId
+                endpoint.startsWith("getAlbumList") -> parsedData.addAll(parseNavidromeAlbumListJSON(responseContent, baseUrl, server.username, server.password))
+                endpoint.startsWith("getAlbum.")    -> parsedData.addAll(parseNavidromeAlbumJSON(responseContent, baseUrl, server.username, server.password)) // Note: getAlbum.view takes an album ID, typically not musicFolderId
 
                 endpoint.startsWith("getArtists")   -> parsedData.addAll(parseNavidromeArtistsJSON(responseContent))
-                endpoint.startsWith("getArtist.")   -> parsedData.addAll(parseNavidromeArtistAlbumsJSON(responseContent, server.url, server.username, server.password))
+                endpoint.startsWith("getArtist.")   -> parsedData.addAll(parseNavidromeArtistAlbumsJSON(responseContent, baseUrl, server.username, server.password))
                 endpoint.startsWith("getArtistInfo")-> parsedData.addAll(listOf(parseNavidromeArtistBiographyJSON(responseContent)))
 
-                endpoint.startsWith("getPlaylists") -> parsedData.addAll(parseNavidromePlaylistsJSON(responseContent, server.url, server.username, server.password))
-                endpoint.startsWith("getPlaylist.") -> parsedData.addAll(parseNavidromePlaylistJSON(responseContent, server.url, server.username, server.password))
+                endpoint.startsWith("getPlaylists") -> parsedData.addAll(parseNavidromePlaylistsJSON(responseContent, baseUrl, server.username, server.password))
+                endpoint.startsWith("getPlaylist.") -> parsedData.addAll(parseNavidromePlaylistJSON(responseContent, baseUrl, server.username, server.password))
 
                 endpoint.startsWith("getInternetRadioStations") -> parsedData.addAll(parseNavidromeRadioJSON(responseContent))
 
                 endpoint.startsWith("getLyrics.") -> parsedData.addAll(listOf(parseNavidromePlainLyricsJSON(responseContent)))
                 endpoint.startsWith("getLyricsBySongId.") -> parsedData.addAll(parseNavidromeSyncedLyricsJSON(responseContent))
 
-                endpoint.startsWith("getStarred") -> { parsedData.addAll(parseNavidromeFavouritesJSON(responseContent, server.url, server.username, server.password)) }
+                endpoint.startsWith("getStarred") -> { parsedData.addAll(parseNavidromeFavouritesJSON(responseContent, baseUrl, server.username, server.password)) }
 
                 endpoint.startsWith("setRating") -> { NavidromeManager.setSyncingStatus(false) }
 
                 endpoint.startsWith("star") -> { NavidromeManager.setSyncingStatus(false) }
                 endpoint.startsWith("unstar") -> { NavidromeManager.setSyncingStatus(false) }
 
-                endpoint.startsWith("getSimilarSongs") -> parsedData.addAll(parseNavidromeSimilarSongsJSON(responseContent, server.url, server.username, server.password))
+                endpoint.startsWith("getSimilarSongs") -> parsedData.addAll(parseNavidromeSimilarSongsJSON(responseContent, baseUrl, server.username, server.password))
             }
-        } catch (e: UnresolvedAddressException) {
-            Log.e("NAVIDROME", "Network error for URL: $url", e)
-            navidromeStatus.value = "Unknown host"
-        }catch (e: ConnectException) {
-            Log.e("NAVIDROME", "Network error for URL: $url", e)
-            navidromeStatus.value = e.message.toString()
         } catch (e: Exception) {
             Log.e("NAVIDROME", "Network error for URL: $url", e)
-            navidromeStatus.value = e.message.toString()
+            val isConnectionError = e is ConnectException ||
+                    e is java.net.SocketTimeoutException ||
+                    e is UnresolvedAddressException ||
+                    e.message?.contains("Failed to connect", ignoreCase = true) == true ||
+                    e.message?.contains("Connection refused", ignoreCase = true) == true
+
+            if (isConnectionError && retryCount < 1) {
+                Log.w("NAVIDROME", "Connection error detected. STUN port may have changed. Re-resolving dynamic URL...")
+                NavidromeManager.resolveActiveServerUrl(server, forceRefresh = true)
+                return@withContext getRequest(endpoint, musicFolderIds, ignoreCachedResponse, retryCount + 1)
+            }
+            if (e is UnresolvedAddressException) {
+                navidromeStatus.value = "Unknown host"
+            } else {
+                navidromeStatus.value = e.message.toString()
+            }
         } finally {
             NavidromeManager.setSyncingStatus(false)
         }
@@ -288,6 +299,37 @@ class NavidromeDataSource @Inject constructor() {
             null,
             true
         )
+    }
+
+    suspend fun reportPlayback(
+        songId: String,
+        state: String,
+        positionMs: Long
+    ) = withContext(Dispatchers.IO) {
+        if (songId.isBlank() || songId.startsWith("Local")) return@withContext emptyList()
+        val ignoreScrobble = (state == "paused" || state == "stopped")
+        getRequest(
+            "reportPlayback.view?mediaId=$songId&id=$songId&mediaType=song&state=$state&positionMs=$positionMs&playbackRate=1.0&ignoreScrobble=$ignoreScrobble",
+            null,
+            true
+        )
+    }
+
+    suspend fun savePlayQueue(
+        songIds: List<String>,
+        currentSongId: String,
+        positionMs: Long
+    ) = withContext(Dispatchers.IO) {
+        if (songIds.isEmpty()) return@withContext emptyList()
+        val queryParams = buildString {
+            append("savePlayQueue.view?")
+            songIds.take(50).forEach { id ->
+                append("id=").append(id).append("&")
+            }
+            append("current=").append(currentSongId)
+            append("&position=").append(positionMs)
+        }
+        getRequest(queryParams, null, true)
     }
 
     // Artists

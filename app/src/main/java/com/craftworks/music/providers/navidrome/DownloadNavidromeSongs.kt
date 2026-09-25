@@ -22,7 +22,8 @@ fun downloadNavidromeSong(
 
     val passwordSalt = NavidromeDataSource.generateSalt(8)
     val passwordHash = NavidromeDataSource.md5Hash(server.password + passwordSalt)
-    val url = "${server.url}/rest/download.view?id=${song.extras?.getString("navidromeID")}&u=${server.username}&t=$passwordHash&s=$passwordSalt&v=1.16.1&c=Chora".toUri()
+    val baseUrl = server.activeBaseUrl ?: server.url
+    val url = "$baseUrl/rest/download.view?id=${song.extras?.getString("navidromeID")}&u=${server.username}&t=$passwordHash&s=$passwordSalt&v=1.16.1&c=Chora".toUri()
 
     val extension = song.extras?.getString("format") ?: "mp3"
     val fileName = "${song.title} - ${song.artist}.$extension"

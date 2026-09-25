@@ -9,12 +9,22 @@ import com.craftworks.music.data.NavidromeProvider
 import com.craftworks.music.data.datasource.navidrome.NavidromeDataSource
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import java.net.HttpURLConnection
+import java.net.URI
+import java.security.SecureRandom
+import java.security.cert.X509Certificate
+import javax.net.ssl.HttpsURLConnection
+import javax.net.ssl.SSLContext
+import javax.net.ssl.TrustManager
+import javax.net.ssl.X509TrustManager
 
 object NavidromeManager {
     private val servers = mutableMapOf<String, NavidromeProvider>()
@@ -36,12 +46,85 @@ object NavidromeManager {
 
     private val _syncStatus = MutableStateFlow(false)
 
+    suspend fun resolveActiveServerUrl(server: NavidromeProvider, forceRefresh: Boolean = false): String = withContext(Dispatchers.IO) {
+        if (!forceRefresh && !server.activeBaseUrl.isNullOrBlank()) {
+            return@withContext server.activeBaseUrl!!
+        }
+
+        try {
+            val urlObj = URI(server.url).toURL()
+            var conn = (urlObj.openConnection() as HttpURLConnection).apply {
+                instanceFollowRedirects = false
+                requestMethod = "HEAD"
+                connectTimeout = 5000
+                readTimeout = 5000
+                if (this is HttpsURLConnection && server.allowSelfSignedCert == true) {
+                    val trustAll = arrayOf<TrustManager>(object : X509TrustManager {
+                        override fun checkClientTrusted(chain: Array<X509Certificate>?, authType: String?) {}
+                        override fun checkServerTrusted(chain: Array<X509Certificate>?, authType: String?) {}
+                        override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
+                    })
+                    val sc = SSLContext.getInstance("TLS")
+                    sc.init(null, trustAll, SecureRandom())
+                    sslSocketFactory = sc.socketFactory
+                    hostnameVerifier = javax.net.ssl.HostnameVerifier { _, _ -> true }
+                }
+            }
+            conn.connect()
+            var code = conn.responseCode
+            if (code == 405) {
+                conn.disconnect()
+                conn = (urlObj.openConnection() as HttpURLConnection).apply {
+                    instanceFollowRedirects = false
+                    requestMethod = "GET"
+                    connectTimeout = 5000
+                    readTimeout = 5000
+                    if (this is HttpsURLConnection && server.allowSelfSignedCert == true) {
+                        val trustAll = arrayOf<TrustManager>(object : X509TrustManager {
+                            override fun checkClientTrusted(chain: Array<X509Certificate>?, authType: String?) {}
+                            override fun checkServerTrusted(chain: Array<X509Certificate>?, authType: String?) {}
+                            override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
+                        })
+                        val sc = SSLContext.getInstance("TLS")
+                        sc.init(null, trustAll, SecureRandom())
+                        sslSocketFactory = sc.socketFactory
+                        hostnameVerifier = javax.net.ssl.HostnameVerifier { _, _ -> true }
+                    }
+                }
+                conn.connect()
+                code = conn.responseCode
+            }
+
+            if (code in 300..399) {
+                val location = conn.getHeaderField("Location")
+                if (!location.isNullOrBlank()) {
+                    val targetUri = URI(location)
+                    val resolvedUri = if (targetUri.isAbsolute) targetUri else urlObj.toURI().resolve(targetUri)
+                    val portPart = if (resolvedUri.port != -1) ":${resolvedUri.port}" else ""
+                    val resolvedOrigin = "${resolvedUri.scheme}://${resolvedUri.host}$portPart"
+                    Log.d("NAVIDROME", "Resolved dynamic redirect URL: $resolvedOrigin (entry was ${server.url})")
+                    server.activeBaseUrl = resolvedOrigin
+                    conn.disconnect()
+                    return@withContext resolvedOrigin
+                }
+            }
+            conn.disconnect()
+        } catch (e: Exception) {
+            Log.w("NAVIDROME", "Could not probe redirect for ${server.url}: ${e.message}")
+        }
+
+        server.activeBaseUrl = server.url
+        return@withContext server.url
+    }
+
     suspend fun addServer(server: NavidromeProvider, isPing: Boolean = false) {
         Log.d("NAVIDROME", "Added server $server")
         server.url = if (!server.url.trim().startsWith("http"))
             "http://" + server.url.trim()
         else
             server.url.trim()
+
+        resolveActiveServerUrl(server, forceRefresh = true)
 
         servers[server.id] = server
         _currentServerId.value = server.id
@@ -111,6 +194,11 @@ object NavidromeManager {
         _currentServerId.value = serverId
         _libraries.value = serverId?.let { servers[it]?.libraryIds } ?: emptyList()
         saveServers()
+        getCurrentServer()?.let { server ->
+            CoroutineScope(Dispatchers.IO).launch {
+                resolveActiveServerUrl(server, forceRefresh = true)
+            }
+        }
     }
 
     private fun updateServersFlow() {
@@ -148,6 +236,12 @@ object NavidromeManager {
         }
         _libraries.value = _currentServerId.value?.let { servers[it]?.libraryIds } ?: emptyList()
         updateServersFlow()
+
+        getCurrentServer()?.let { server ->
+            CoroutineScope(Dispatchers.IO).launch {
+                resolveActiveServerUrl(server, forceRefresh = false)
+            }
+        }
     }
 
     fun getEnabledLibraryIdsForCurrentServer(): List<Int> {

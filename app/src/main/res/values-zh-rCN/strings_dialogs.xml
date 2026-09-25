@@ -39,7 +39,7 @@
     <string name="Dialog_New_Playlist">新歌单</string>
     <string name="Dialog_Delete_Playlist">删除歌单</string>
     <string name="Label_Confirm_Delete_Playlist">您确定要删除该歌单吗？</string>
-    <string name="Dialog_Add_To_Playlist">添加至歌单</string>
+    <string name="Dialog_Add_To_Playlist">添加 / 至歌单</string>
     <string name="Label_Playlist_Name">歌单名称：</string>
     <!-- Albums -->
     <string name="Label_MoreSongsFrom">More Songs From</string>

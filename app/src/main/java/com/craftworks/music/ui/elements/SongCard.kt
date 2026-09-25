@@ -47,7 +47,7 @@ import androidx.media.utils.MediaConstants.METADATA_KEY_IS_EXPLICIT
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.StarRating
-import coil.compose.SubcomposeAsyncImage
+import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.craftworks.music.R
 import com.craftworks.music.formatMilliseconds
@@ -101,17 +101,16 @@ fun HorizontalSongCard(
                 }
             }
             else {
-                SubcomposeAsyncImage(
+                val cacheKey = song.mediaMetadata.extras?.getString("navidromeID") ?: song.mediaId
+                AsyncImage(
                     model = ImageRequest.Builder(context)
                         .data(song.mediaMetadata.artworkUri)
-                        .crossfade(true)
-                        .size(64)
-                        .diskCacheKey(
-                            song.mediaMetadata.extras?.getString("navidromeID") ?: song.mediaId
-                        )
+                        .memoryCacheKey(cacheKey)
+                        .diskCacheKey(cacheKey)
+                        .crossfade(false)
                         .build(),
                     contentDescription = "Album Image",
-                    contentScale = ContentScale.FillHeight,
+                    contentScale = ContentScale.Crop,
                     modifier = Modifier
                         .size(64.dp)
                         .padding(4.dp, 0.dp, 0.dp, 0.dp)
@@ -262,7 +261,7 @@ fun HorizontalSongCard(
                         }
                     )
                     DropdownMenuItem(
-                        enabled = !song.mediaMetadata.extras?.getString("navidromeID")!!.startsWith("Local_"),
+                        enabled = song.mediaMetadata.extras?.getString("navidromeID")?.startsWith("Local_") != true,
                         text = {
                             Text(stringResource(R.string.Action_Download))
                         },

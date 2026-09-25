@@ -78,4 +78,27 @@ class SongRepository @Inject constructor(
 
         navidromeDataSource.scrobbleSong(songId, submission)
     }
+
+    suspend fun reportPlayback(songId: String, state: String, positionMs: Long) {
+        if (songId.isBlank() || songId.startsWith("Local"))
+            return
+
+        try {
+            android.util.Log.d("NAVIDROME", "reportPlayback: songId=$songId, state=$state, pos=$positionMs")
+            navidromeDataSource.reportPlayback(songId, state, positionMs)
+        } catch (e: Exception) {
+            android.util.Log.e("NAVIDROME", "Failed to report playback", e)
+        }
+    }
+
+    suspend fun savePlayQueue(songIds: List<String>, currentSongId: String, positionMs: Long) {
+        if (songIds.isEmpty() || currentSongId.startsWith("Local"))
+            return
+
+        try {
+            navidromeDataSource.savePlayQueue(songIds, currentSongId, positionMs)
+        } catch (e: Exception) {
+            android.util.Log.e("NAVIDROME", "Failed to save play queue", e)
+        }
+    }
 }

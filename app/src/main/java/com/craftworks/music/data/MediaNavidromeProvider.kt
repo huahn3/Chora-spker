@@ -11,8 +11,12 @@ data class NavidromeProvider (
     val enabled:Boolean? = true,
     var allowSelfSignedCert: Boolean? = false,
     // List of library folders and if they're enabled or not.
-    var libraryIds: List<Pair<NavidromeLibrary, Boolean>> = listOf(Pair(NavidromeLibrary(0, "Media Library"), true))
-)
+    var libraryIds: List<Pair<NavidromeLibrary, Boolean>> = listOf(Pair(NavidromeLibrary(0, "Media Library"), true)),
+    @kotlinx.serialization.Transient
+    var activeBaseUrl: String? = null
+) {
+    fun getEffectiveUrl(): String = activeBaseUrl ?: url
+}
 
 @Serializable
 data class NavidromeLibrary (

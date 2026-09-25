@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -44,6 +45,7 @@ class AlbumScreenViewModel @Inject constructor(
                 localDataSettingsManager.sortAlbumOrder,
                 localDataSettingsManager.showFavoriteOnly
             ) { sortOrder, showFavorites -> sortOrder to showFavorites }
+                .distinctUntilChanged()
                 .collect { (sortOrder, showFavorites) ->
                     _sortOrder.value = sortOrder
                     _showFavoritesOnly.value = showFavorites
@@ -51,8 +53,7 @@ class AlbumScreenViewModel @Inject constructor(
                 }
         }
         viewModelScope.launch {
-            localDataSettingsManager.sortAlbumOrder.collect { sortOrder ->
-                _sortOrder.value = sortOrder
+            DataRefreshManager.dataSourceChangedEvent.collect {
                 getAlbums()
             }
         }
@@ -60,8 +61,6 @@ class AlbumScreenViewModel @Inject constructor(
 
     private var getAlbumsJob: Job? = null
     fun getAlbums() {
-        _allAlbums.value = emptyList()
-
         getAlbumsJob?.cancel()
 
         getAlbumsJob = viewModelScope.launch {
@@ -72,7 +71,7 @@ class AlbumScreenViewModel @Inject constructor(
                     val allAlbumsDeferred = async { albumRepository.getAlbums(_sortOrder.value.key, 50, 0, true, _showFavoritesOnly.value) }
 
                     _allAlbums.value = allAlbumsDeferred.await().sortedByDescending {
-                        it.mediaMetadata.extras?.getString("navidromeID")!!.startsWith("Local_")
+                        it.mediaMetadata.extras?.getString("navidromeID")?.startsWith("Local_") == true
                     }
                 }
                 _isLoading.value = false
@@ -86,13 +85,30 @@ class AlbumScreenViewModel @Inject constructor(
         return albumRepository.getAlbum(id) ?: emptyList()
     }
 
-    fun getMoreAlbums(size: Int){
-        println("GETTING MORE ALBUMS")
+    private var isFetchingMore = false
+    fun getMoreAlbums(size: Int) {
+        if (isFetchingMore) return
         viewModelScope.launch {
-            coroutineScope {
-                val albumOffset = _allAlbums.value.size
-                val newAlbums = albumRepository.getAlbums(_sortOrder.value.key, size, albumOffset, favoritesOnly=_showFavoritesOnly.value)
-                _allAlbums.value += newAlbums
+            isFetchingMore = true
+            try {
+                coroutineScope {
+                    val albumOffset = _allAlbums.value.size
+                    val newAlbums = albumRepository.getAlbums(_sortOrder.value.key, size, albumOffset, favoritesOnly = _showFavoritesOnly.value)
+                    if (newAlbums.isNotEmpty()) {
+                        val currentIds = _allAlbums.value.mapTo(HashSet()) {
+                            it.mediaMetadata.extras?.getString("navidromeID") ?: it.mediaId
+                        }
+                        val distinctNew = newAlbums.filter {
+                            val id = it.mediaMetadata.extras?.getString("navidromeID") ?: it.mediaId
+                            !currentIds.contains(id)
+                        }
+                        if (distinctNew.isNotEmpty()) {
+                            _allAlbums.value += distinctNew
+                        }
+                    }
+                }
+            } finally {
+                isFetchingMore = false
             }
         }
     }

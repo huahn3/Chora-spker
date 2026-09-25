@@ -42,6 +42,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
 import androidx.media3.session.MediaController
 import com.craftworks.music.R
 import com.craftworks.music.data.model.MediaData
@@ -74,8 +75,8 @@ fun SongsHorizontalColumn(
 
     // Load more songs at scroll
     if (NavidromeManager.checkActiveServers() && isSearch == false && !showFavoritesOnly){
-        LaunchedEffect(listState) {
-            if (songsList.size % 100 != 0) return@LaunchedEffect
+        LaunchedEffect(listState, songList.size) {
+            if (songList.isEmpty() || songList.size % 100 != 0) return@LaunchedEffect
 
             snapshotFlow {
                 val lastVisibleItemIndex = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index
@@ -102,7 +103,7 @@ fun SongsHorizontalColumn(
     ) {
         // Group songs by their source (Local or Navidrome)
         val groupedSongs = songList.groupBy { song ->
-            if (song.mediaMetadata.extras?.getString("navidromeID")!!.startsWith("Local_")) "Local" else "Navidrome"
+            if (song.mediaMetadata.extras?.getString("navidromeID")?.startsWith("Local_") == true) "Local" else "Navidrome"
         }
 
         groupedSongs.forEach { (groupName, songsInGroup) ->
@@ -130,7 +131,10 @@ fun SongsHorizontalColumn(
                     )
                 }
             }
-            itemsIndexed(songsInGroup) { index, song ->
+            itemsIndexed(
+                items = songsInGroup,
+                key = { _, song -> song.mediaMetadata.extras?.getString("navidromeID") ?: song.mediaId }
+            ) { index, song ->
                 HorizontalSongCard(
                     song = song,
                     onClick = {
@@ -166,12 +170,12 @@ fun AlbumGrid(
 
     // Group songs by their source (Local or Navidrome)
     val groupedAlbums = albums.groupBy { song ->
-        if (song.mediaMetadata.extras?.getString("navidromeID")!!.startsWith("Local_")) "Local" else "Navidrome"
+        if (song.mediaMetadata.extras?.getString("navidromeID")?.startsWith("Local_") == true) "Local" else "Navidrome"
     }
 
     if (NavidromeManager.checkActiveServers() && isSearch == false) {
-        LaunchedEffect(gridState) {
-            if (albumList.size % 50 != 0) return@LaunchedEffect
+        LaunchedEffect(gridState, albums.size) {
+            if (albums.isEmpty() || albums.size % 50 != 0) return@LaunchedEffect
 
             snapshotFlow {
                 val lastVisibleItemIndex = gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index
@@ -222,7 +226,10 @@ fun AlbumGrid(
                     }
 
                 }
-                itemsIndexed(albumsInGroup) { index, album ->
+                itemsIndexed(
+                    items = albumsInGroup,
+                    key = { _, album -> album.mediaMetadata.extras?.getString("navidromeID") ?: album.mediaId }
+                ) { index, album ->
                     AlbumCard(album = album,
                         onClick = {
                             onAlbumSelected(album.toAlbum())
@@ -230,9 +237,14 @@ fun AlbumGrid(
                         onPlay = {
                             coroutineScope.launch {
                                 val mediaItems = viewModel.getAlbum(album.mediaMetadata.extras?.getString("navidromeID") ?: "")
-                                if (mediaItems.isNotEmpty())
+                                val songsToPlay = if (mediaItems.isNotEmpty() && mediaItems[0].mediaMetadata.mediaType == MediaMetadata.MEDIA_TYPE_ALBUM) {
+                                    mediaItems.drop(1)
+                                } else {
+                                    mediaItems
+                                }
+                                if (songsToPlay.isNotEmpty())
                                     SongHelper.play(
-                                        mediaItems = mediaItems.subList(1, mediaItems.size),
+                                        mediaItems = songsToPlay,
                                         index = 0,
                                         mediaController = mediaController
                                     )
@@ -245,7 +257,7 @@ fun AlbumGrid(
         else {
             items(
                 items = albums,
-                key = { it.mediaId }
+                key = { it.mediaMetadata.extras?.getString("navidromeID") ?: it.mediaId }
             ) { album ->
                 AlbumCard(album = album,
                     onClick = {
@@ -254,9 +266,14 @@ fun AlbumGrid(
                     onPlay = {
                         coroutineScope.launch {
                             val mediaItems = viewModel.getAlbum(album.mediaMetadata.extras?.getString("navidromeID") ?: "")
-                            if (mediaItems.isNotEmpty())
+                            val songsToPlay = if (mediaItems.isNotEmpty() && mediaItems[0].mediaMetadata.mediaType == MediaMetadata.MEDIA_TYPE_ALBUM) {
+                                mediaItems.drop(1)
+                            } else {
+                                mediaItems
+                            }
+                            if (songsToPlay.isNotEmpty())
                                 SongHelper.play(
-                                    mediaItems = mediaItems.subList(1, mediaItems.size),
+                                    mediaItems = songsToPlay,
                                     index = 0,
                                     mediaController = mediaController
                                 )
@@ -283,7 +300,7 @@ fun AlbumGrid(
 
     // Group songs by their source (Local or Navidrome)
     val groupedAlbums = albums.groupBy { song ->
-        if (song.mediaMetadata.extras?.getString("navidromeID")!!.startsWith("Local_")) "Local" else "Navidrome"
+        if (song.mediaMetadata.extras?.getString("navidromeID")?.startsWith("Local_") == true) "Local" else "Navidrome"
     }
 
     LazyVerticalGrid(
@@ -321,7 +338,10 @@ fun AlbumGrid(
                     }
 
                 }
-                itemsIndexed(albumsInGroup) { index, album ->
+                itemsIndexed(
+                    items = albumsInGroup,
+                    key = { _, album -> album.mediaMetadata.extras?.getString("navidromeID") ?: album.mediaId }
+                ) { index, album ->
                     AlbumCard(album = album,
                         onClick = {
                             onAlbumSelected(album.toAlbum())
@@ -329,9 +349,14 @@ fun AlbumGrid(
                         onPlay = {
                             coroutineScope.launch {
                                 val mediaItems = onGetAlbum(album.mediaMetadata.extras?.getString("navidromeID") ?: "")
-                                if (mediaItems.isNotEmpty())
+                                val songsToPlay = if (mediaItems.isNotEmpty() && mediaItems[0].mediaMetadata.mediaType == MediaMetadata.MEDIA_TYPE_ALBUM) {
+                                    mediaItems.drop(1)
+                                } else {
+                                    mediaItems
+                                }
+                                if (songsToPlay.isNotEmpty())
                                     SongHelper.play(
-                                        mediaItems = mediaItems.subList(1, mediaItems.size),
+                                        mediaItems = songsToPlay,
                                         index = 0,
                                         mediaController = mediaController
                                     )
@@ -344,7 +369,7 @@ fun AlbumGrid(
         else {
             items(
                 items = albums,
-                key = { it.mediaId }
+                key = { it.mediaMetadata.extras?.getString("navidromeID") ?: it.mediaId }
             ) { album ->
                 AlbumCard(album = album,
                     onClick = {
@@ -353,9 +378,14 @@ fun AlbumGrid(
                     onPlay = {
                         coroutineScope.launch {
                             val mediaItems = onGetAlbum(album.mediaMetadata.extras?.getString("navidromeID") ?: "")
-                            if (mediaItems.isNotEmpty())
+                            val songsToPlay = if (mediaItems.isNotEmpty() && mediaItems[0].mediaMetadata.mediaType == MediaMetadata.MEDIA_TYPE_ALBUM) {
+                                mediaItems.drop(1)
+                            } else {
+                                mediaItems
+                            }
+                            if (songsToPlay.isNotEmpty())
                                 SongHelper.play(
-                                    mediaItems = mediaItems.subList(1, mediaItems.size),
+                                    mediaItems = songsToPlay,
                                     index = 0,
                                     mediaController = mediaController
                                 )
@@ -375,7 +405,7 @@ fun AlbumRow(
     onPlay: (album: MediaItem) -> Unit,
 ){
     val showProviderDividers by AppearanceSettingsManager(LocalContext.current).showProviderDividersFlow.collectAsStateWithLifecycle(true)
-    val dividerIndex = albums.indexOfFirst { it.mediaMetadata.extras?.getString("navidromeID")!!.startsWith("Local_") }
+    val dividerIndex = albums.indexOfFirst { it.mediaMetadata.extras?.getString("navidromeID")?.startsWith("Local_") == true }
 
     LazyRow(
         modifier = Modifier
@@ -386,7 +416,7 @@ fun AlbumRow(
     ) {
         itemsIndexed(
             items = albums,
-            key = { _, album -> album.mediaId }
+            key = { _, album -> album.mediaMetadata.extras?.getString("navidromeID") ?: album.mediaId }
         ) { index, album ->
             // Show divider between local and navidrome albums
             if (showProviderDividers) {

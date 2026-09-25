@@ -5,6 +5,7 @@ import android.content.Intent
 import android.os.Bundle
 import android.util.Log
 import android.widget.Toast
+import android.net.Uri
 import androidx.annotation.OptIn
 import androidx.compose.ui.util.fastFilter
 import androidx.core.math.MathUtils.clamp
@@ -20,6 +21,7 @@ import androidx.media3.common.StarRating
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.ResolvingDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.SeekParameters
@@ -41,6 +43,7 @@ import com.craftworks.music.data.repository.PlaylistRepository
 import com.craftworks.music.data.repository.RadioRepository
 import com.craftworks.music.data.repository.SongRepository
 import com.craftworks.music.managers.NavidromeManager
+import com.craftworks.music.widgets.MusicWidgetManager
 import com.craftworks.music.managers.TranscodeManager
 import com.craftworks.music.managers.settings.AppearanceSettingsManager
 import com.craftworks.music.managers.settings.LocalDataSettingsManager
@@ -50,9 +53,11 @@ import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.SettableFuture
 import dagger.hilt.android.AndroidEntryPoint
+import com.craftworks.music.data.datasource.navidrome.NavidromeDataSource
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -61,10 +66,12 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import javax.inject.Inject
 import kotlin.math.pow
 
@@ -231,16 +238,37 @@ class ChoraMediaLibraryService : MediaLibraryService() {
             }
         }
 
+        val httpDataSourceFactory = DefaultHttpDataSource.Factory()
+            .setAllowCrossProtocolRedirects(true)
+            .setConnectTimeoutMs(8000)
+            .setReadTimeoutMs(8000)
+
         val resolvingDataSourceFactory = ResolvingDataSource.Factory(
-            DefaultDataSource.Factory(this),
+            DefaultDataSource.Factory(this, httpDataSourceFactory),
             object : ResolvingDataSource.Resolver {
                 override fun resolveDataSpec(dataSpec: DataSpec): DataSpec {
-                    val uri = dataSpec.uri
+                    var uri = dataSpec.uri
 
                     if (uri.path?.contains("stream") == true) {
+                        val server = NavidromeManager.getCurrentServer()
+                        if (server != null) {
+                            val activeUrl = server.activeBaseUrl ?: server.url
+                            try {
+                                val activeUri = Uri.parse(activeUrl)
+                                if (!activeUri.host.isNullOrBlank() && (uri.host != activeUri.host || uri.port != activeUri.port || uri.scheme != activeUri.scheme)) {
+                                    uri = uri.buildUpon()
+                                        .scheme(activeUri.scheme)
+                                        .encodedAuthority(activeUri.encodedAuthority)
+                                        .build()
+                                }
+                            } catch (e: Exception) {
+                                Log.w("MusicService", "Error resolving active stream URI: ${e.message}")
+                            }
+                        }
+
                         val bitrate = runBlocking { transcodeManager.currentBitrateFlow.first() }
                         if (bitrate == "No Transcoding")
-                            return dataSpec
+                            return dataSpec.withUri(uri)
 
                         val format = runBlocking { transcodeManager.currentFormatFlow.first() }
 
@@ -290,25 +318,107 @@ class ChoraMediaLibraryService : MediaLibraryService() {
 
                 super.onMediaItemTransition(mediaItem, reason)
 
-                serviceIOScope.launch {
-                    lyricsRepository.getLyrics(mediaItem?.mediaMetadata)
-                    val mediaId = mediaItem?.mediaMetadata?.extras?.getString("navidromeID") ?: return@launch
-                    songRepository.scrobbleSong(mediaId, false)
-                }
+                MusicWidgetManager.updateWidgets(this@ChoraMediaLibraryService)
 
-                /*
-                serviceMainScope.launch {
-                    playbackSettingsManager.autoPlayFlow.collect {
-                        if (it && player.currentMediaItemIndex == player.mediaItemCount - 1)
-                            player.addMediaItems(songRepository.getSimilarSongs(mediaItem?.mediaMetadata?.extras?.getString("navidromeID")!!, 1))
+                val isPlayingNow = player.isPlaying
+                val mediaMetadata = mediaItem?.mediaMetadata
+                val mediaId = mediaMetadata?.extras?.getString("navidromeID")
+
+                serviceIOScope.launch {
+                    lyricsRepository.getLyrics(mediaMetadata)
+                    if (mediaId != null && isPlayingNow) {
+                        songRepository.scrobbleSong(mediaId, false)
+                        songRepository.reportPlayback(mediaId, "playing", 0)
                     }
                 }
-                */
+
+                saveState(sync = false)
+            }
+
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                super.onIsPlayingChanged(isPlaying)
+                MusicWidgetManager.updateWidgets(this@ChoraMediaLibraryService)
+
+                val mediaItem = player.currentMediaItem
+                val mediaId = mediaItem?.mediaMetadata?.extras?.getString("navidromeID")
+                val currentPosition = player.currentPosition
+
+                if (!mediaId.isNullOrBlank() && !mediaId.startsWith("Local") &&
+                    mediaItem.mediaMetadata.mediaType != MediaMetadata.MEDIA_TYPE_RADIO_STATION
+                ) {
+                    serviceIOScope.launch {
+                        if (isPlaying) {
+                            songRepository.scrobbleSong(mediaId, false)
+                            songRepository.reportPlayback(mediaId, "playing", currentPosition)
+                        } else {
+                            songRepository.reportPlayback(mediaId, "paused", currentPosition)
+                        }
+                    }
+                }
+
+                if (!isPlaying) {
+                    saveState(sync = false)
+                }
+            }
+
+            override fun onPositionDiscontinuity(
+                oldPosition: Player.PositionInfo,
+                newPosition: Player.PositionInfo,
+                reason: Int
+            ) {
+                super.onPositionDiscontinuity(oldPosition, newPosition, reason)
+                if (reason == Player.DISCONTINUITY_REASON_SEEK) {
+                    val mediaItem = player.currentMediaItem
+                    val mediaId = mediaItem?.mediaMetadata?.extras?.getString("navidromeID")
+                    val isPlayingNow = player.isPlaying
+                    val pos = newPosition.positionMs
+                    if (!mediaId.isNullOrBlank() && !mediaId.startsWith("Local") &&
+                        mediaItem.mediaMetadata.mediaType != MediaMetadata.MEDIA_TYPE_RADIO_STATION
+                    ) {
+                        serviceIOScope.launch {
+                            val state = if (isPlayingNow) "playing" else "paused"
+                            songRepository.reportPlayback(mediaId, state, pos)
+                        }
+                    }
+                    saveState(sync = false)
+                }
+            }
+
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                super.onPlaybackStateChanged(playbackState)
+                MusicWidgetManager.updateWidgets(this@ChoraMediaLibraryService)
+
+                if (playbackState == Player.STATE_ENDED) {
+                    val mediaItem = player.currentMediaItem
+                    val mediaId = mediaItem?.mediaMetadata?.extras?.getString("navidromeID")
+                    val trackDuration = player.duration.coerceAtLeast(0L)
+                    if (!mediaId.isNullOrBlank() && !mediaId.startsWith("Local") &&
+                        mediaItem.mediaMetadata.mediaType != MediaMetadata.MEDIA_TYPE_RADIO_STATION
+                    ) {
+                        serviceIOScope.launch {
+                            songRepository.reportPlayback(mediaId, "stopped", trackDuration)
+                        }
+                    }
+                    saveState(sync = false)
+                }
             }
 
             override fun onPlayerError(error: PlaybackException) {
                 error.printStackTrace()
                 Log.e("PLAYER", error.stackTraceToString())
+
+                val currentServer = NavidromeManager.getCurrentServer()
+                if (currentServer != null && error.errorCode in listOf(
+                    PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED,
+                    PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT,
+                    PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS,
+                    PlaybackException.ERROR_CODE_IO_UNSPECIFIED
+                )) {
+                    Log.w("PLAYER", "Playback failed due to network error. Re-resolving STUN server URL...")
+                    CoroutineScope(Dispatchers.IO).launch {
+                        NavidromeManager.resolveActiveServerUrl(currentServer, forceRefresh = true)
+                    }
+                }
 
                 Toast.makeText(
                     this@ChoraMediaLibraryService,
@@ -334,7 +444,58 @@ class ChoraMediaLibraryService : MediaLibraryService() {
             .setSessionActivity(sessionActivityPendingIntent)
             .build()
 
+        // Auto-restore playback state on startup so app isn't blank
+        serviceIOScope.launch {
+            try {
+                val resumption = LocalDataSettingsManager(applicationContext)
+                    .playbackResumptionPlaylistWithStartPosition.firstOrNull()
+
+                if (resumption != null && resumption.mediaItems.isNotEmpty()) {
+                    val currentServer = NavidromeManager.getCurrentServer()
+                    val baseUrl = if (currentServer != null) NavidromeManager.resolveActiveServerUrl(currentServer) else null
+
+                    val restoredItems = resumption.mediaItems.map { item ->
+                        val songId = item.mediaMetadata.extras?.getString("navidromeID")
+                        if (currentServer != null && baseUrl != null && !songId.isNullOrBlank() && !songId.startsWith("Local")) {
+                            val salt = NavidromeDataSource.generateSalt(8)
+                            val token = NavidromeDataSource.md5Hash(currentServer.password + salt)
+                            val streamUrl = "$baseUrl/rest/stream.view?&id=$songId&u=${currentServer.username}&t=$token&s=$salt&v=1.12.0&c=Chora"
+                            val coverUrl = "$baseUrl/rest/getCoverArt.view?&id=$songId&u=${currentServer.username}&t=$token&s=$salt&v=1.16.1&c=Chora&size=128"
+
+                            val updatedMetadata = item.mediaMetadata.buildUpon()
+                                .setArtworkUri(coverUrl.toUri())
+                                .build()
+
+                            item.buildUpon()
+                                .setUri(streamUrl.toUri())
+                                .setMediaId(streamUrl)
+                                .setMediaMetadata(updatedMetadata)
+                                .build()
+                        } else {
+                            item
+                        }
+                    }
+
+                    withContext(Dispatchers.Main) {
+                        if (player.mediaItemCount == 0) {
+                            val targetIndex = resumption.startIndex.coerceIn(0, restoredItems.size - 1)
+                            val targetPos = resumption.startPositionMs.coerceAtLeast(0L)
+                            player.setMediaItems(restoredItems)
+                            player.seekTo(targetIndex, targetPos)
+                            player.prepare()
+                            player.playWhenReady = false
+                            Log.d("RESUMPTION", "Auto-restored ${restoredItems.size} items at index $targetIndex, pos $targetPos")
+                            MusicWidgetManager.updateWidgets(this@ChoraMediaLibraryService)
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("RESUMPTION", "Error auto-restoring playback state", e)
+            }
+        }
+
         scrobbleJob = serviceMainScope.launch {
+            var tickCount = 0
             while (isActive) {
                 val duration = player.duration
                 val mediaItem = player.currentMediaItem
@@ -351,12 +512,32 @@ class ChoraMediaLibraryService : MediaLibraryService() {
                                 ?.startsWith("Local") == false &&
                             mediaItem.mediaMetadata.mediaType != MediaMetadata.MEDIA_TYPE_RADIO_STATION
                         ) {
+                            val scrobbleId = mediaItem.mediaMetadata.extras?.getString("navidromeID") ?: ""
                             serviceIOScope.launch {
-                                songRepository.scrobbleSong(mediaItem.mediaMetadata.extras?.getString("navidromeID") ?: "", true)
+                                songRepository.scrobbleSong(scrobbleId, true)
                             }
                         }
                     }
                 }
+
+                if (player.isPlaying) {
+                    tickCount++
+                    if (tickCount % 10 == 0) {
+                        val currentPosition = player.currentPosition
+                        val mediaId = mediaItem?.mediaMetadata?.extras?.getString("navidromeID")
+                        if (!mediaId.isNullOrBlank() && !mediaId.startsWith("Local") &&
+                            mediaItem.mediaMetadata.mediaType != MediaMetadata.MEDIA_TYPE_RADIO_STATION
+                        ) {
+                            serviceIOScope.launch {
+                                songRepository.reportPlayback(mediaId, "playing", currentPosition)
+                            }
+                        }
+                        saveState(sync = false)
+                    }
+                } else {
+                    tickCount = 0
+                }
+
                 delay(1000)
             }
         }
@@ -638,23 +819,30 @@ class ChoraMediaLibraryService : MediaLibraryService() {
             isToStream: Boolean
         ): ListenableFuture<MediaItemsWithStartPosition> {
             val settable = SettableFuture.create<MediaItemsWithStartPosition>()
+            if (player.mediaItemCount > 0) {
+                settable.set(
+                    MediaItemsWithStartPosition(
+                        List(player.mediaItemCount) { player.getMediaItemAt(it) },
+                        player.currentMediaItemIndex,
+                        player.currentPosition
+                    )
+                )
+                return settable
+            }
             serviceMainScope.launch {
                 Log.d("RESUMPTION", "Getting onPlaybackResumption")
-                LocalDataSettingsManager(applicationContext).playbackResumptionPlaylistWithStartPosition.collectLatest { playbackResumptionList ->
+                val playbackResumptionList = LocalDataSettingsManager(applicationContext)
+                    .playbackResumptionPlaylistWithStartPosition.firstOrNull()
+                if (playbackResumptionList != null && playbackResumptionList.mediaItems.isNotEmpty()) {
                     settable.set(playbackResumptionList)
-                    Log.d("RESUMPTION", "Got mediaitems")
                     withContext(Dispatchers.Main) {
                         player.setMediaItems(playbackResumptionList.mediaItems)
                         player.prepare()
                         player.playWhenReady = true
-
                         player.seekTo(playbackResumptionList.startIndex, playbackResumptionList.startPositionMs)
-
-                        Log.d(
-                            "RESUMPTION",
-                            "Set playlist: ${playbackResumptionList.mediaItems.map { it.mediaMetadata.title }} at index ${playbackResumptionList.startIndex} with position ${playbackResumptionList.startPositionMs}"
-                        )
                     }
+                } else {
+                    settable.set(MediaItemsWithStartPosition(emptyList(), 0, 0L))
                 }
             }
             return settable
@@ -757,29 +945,111 @@ class ChoraMediaLibraryService : MediaLibraryService() {
         }
     }
 
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        Log.d("SERVICE", "onTaskRemoved called - closing app")
+        val currentSongId = player.currentMediaItem?.mediaMetadata?.extras?.getString("navidromeID")
+        val currentPos = player.currentPosition
+
+        // 1. Immediately pause local player if playing
+        if (player.isPlaying) {
+            player.pause()
+        }
+
+        // 2. Synchronously report "paused" to Navidrome server
+        if (!currentSongId.isNullOrBlank() && !currentSongId.startsWith("Local")) {
+            runBlocking {
+                withTimeoutOrNull(2500) {
+                    try {
+                        songRepository.reportPlayback(currentSongId, "paused", currentPos)
+                    } catch (e: Exception) {
+                        Log.e("SERVICE", "Error reporting pause in onTaskRemoved", e)
+                    }
+                }
+            }
+        }
+
+        // 3. Save playback state and play queue synchronously
+        saveState(sync = true)
+
+        // 4. Clean shutdown
+        stopSelf()
+        super.onTaskRemoved(rootIntent)
+    }
+
     override fun onDestroy() {
-        saveState()
+        Log.d("SERVICE", "onDestroy called")
+        val currentSongId = player.currentMediaItem?.mediaMetadata?.extras?.getString("navidromeID")
+        val currentPos = player.currentPosition
+
+        if (player.isPlaying) {
+            player.pause()
+        }
+
+        if (!currentSongId.isNullOrBlank() && !currentSongId.startsWith("Local")) {
+            runBlocking {
+                withTimeoutOrNull(2500) {
+                    try {
+                        songRepository.reportPlayback(currentSongId, "paused", currentPos)
+                    } catch (e: Exception) {
+                        Log.e("SERVICE", "Error reporting pause in onDestroy", e)
+                    }
+                }
+            }
+        }
+        saveState(sync = true)
         session?.release()
         scrobbleJob?.cancel()
         sleepTimerJob?.cancel()
         instance = null
+        MusicWidgetManager.updateWidgets(this)
         super.onDestroy()
     }
 
-    fun saveState() {
-        runBlocking {
-            Log.d(
-                "AA",
-                "Saving state! Playlist: ${List(player.mediaItemCount) { i -> player.getMediaItemAt(i) }.map { it.mediaMetadata.title }}, current index: ${player.currentMediaItemIndex}, current position: ${player.currentPosition}"
-            )
+    fun saveState(sync: Boolean = false) {
+        val count = player.mediaItemCount
+        if (count == 0) return
+        val currentIndex = player.currentMediaItemIndex
+        val currentPosition = player.currentPosition
+        val items = List(count) { i -> player.getMediaItemAt(i) }
 
-            LocalDataSettingsManager(applicationContext).setPlaybackResumption(
-                List(player.mediaItemCount) { i ->
-                    player.getMediaItemAt(i)
-                },
-                player.currentMediaItemIndex,
-                player.currentPosition
-            )
+        val action = suspend {
+            try {
+                Log.d(
+                    "AA",
+                    "Saving state! Playlist size: ${items.size}, current index: $currentIndex, current position: $currentPosition"
+                )
+                LocalDataSettingsManager(applicationContext).setPlaybackResumption(
+                    items,
+                    currentIndex,
+                    currentPosition
+                )
+
+                val currentItem = if (currentIndex in 0 until count) items[currentIndex] else null
+                val currentNavidromeId = currentItem?.mediaMetadata?.extras?.getString("navidromeID")
+                if (!currentNavidromeId.isNullOrBlank() && !currentNavidromeId.startsWith("Local")) {
+                    val navidromeSongIds = items.mapNotNull { it.mediaMetadata.extras?.getString("navidromeID") }
+                        .filter { !it.startsWith("Local") }
+                    if (navidromeSongIds.isNotEmpty()) {
+                        songRepository.savePlayQueue(navidromeSongIds, currentNavidromeId, currentPosition)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("STATE", "Error saving playback state", e)
+            }
+        }
+
+        if (sync) {
+            runBlocking {
+                withTimeoutOrNull(2500) {
+                    action()
+                }
+            }
+        } else {
+            serviceIOScope.launch {
+                withContext(NonCancellable) {
+                    action()
+                }
+            }
         }
     }
 

@@ -64,6 +64,7 @@ fun MediaData.Song.toMediaItem(): MediaItem {
                 if (this@toMediaItem.replayGain?.trackGain != null)
                     putFloat("replayGain", this@toMediaItem.replayGain.trackGain)
                 putBoolean(METADATA_KEY_IS_EXPLICIT, this@toMediaItem.explicitStatus == "explicit")
+                putString("starred", this@toMediaItem.starred)
             }).build()
 
     return MediaItem.Builder()
@@ -97,6 +98,7 @@ fun MediaItem.toSong(): MediaData.Song {
         parent = "",
         dateAdded = "",
         bpm = 0,
-        albumId = ""
+        albumId = "",
+        starred = extras?.getString("starred")
     )
 }

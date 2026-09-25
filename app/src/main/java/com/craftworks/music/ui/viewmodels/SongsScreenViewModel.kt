@@ -8,10 +8,12 @@ import com.craftworks.music.data.repository.SongRepository
 import com.craftworks.music.managers.DataRefreshManager
 import com.craftworks.music.managers.settings.LocalDataSettingsManager
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -34,36 +36,61 @@ class SongsScreenViewModel @Inject constructor(
     val showFavoritesOnly: StateFlow<Boolean> = _showFavoritesOnly.asStateFlow()
 
     init {
-        getSongs()
         viewModelScope.launch {
-            localDataSettingsManager.showFavoriteOnly.collect { showFavorites ->
-                _showFavoritesOnly.value = showFavorites
-                getSongs()
-            }
+            localDataSettingsManager.showFavoriteOnly
+                .distinctUntilChanged()
+                .collect { showFavorites ->
+                    _showFavoritesOnly.value = showFavorites
+                    getSongs()
+                }
+        }
+        viewModelScope.launch {
             DataRefreshManager.dataSourceChangedEvent.collect {
                 getSongs()
             }
         }
     }
 
+    private var getSongsJob: Job? = null
     fun getSongs() {
-        viewModelScope.launch {
+        getSongsJob?.cancel()
+        getSongsJob = viewModelScope.launch {
             _isLoading.value = true
-            coroutineScope {
-                _allSongs.value = songRepository.getSongs(ignoreCachedResponse = true, favoritesOnly = _showFavoritesOnly.value)
+            try {
+                coroutineScope {
+                    _allSongs.value = songRepository.getSongs(ignoreCachedResponse = true, favoritesOnly = _showFavoritesOnly.value)
+                }
+            } finally {
+                _isLoading.value = false
             }
-            _isLoading.value = false
         }
     }
 
+    private var isFetchingMore = false
     fun getMoreSongs(size: Int){
+        if (isFetchingMore) return
         viewModelScope.launch {
-            _isLoading.value = true
-            coroutineScope {
-                val songOffset = _allSongs.value.size
-                _allSongs.value += songRepository.getSongs(songCount = size, songOffset = songOffset)
+            isFetchingMore = true
+            try {
+                coroutineScope {
+                    val songOffset = _allSongs.value.size
+                    val newSongs = songRepository.getSongs(songCount = size, songOffset = songOffset, favoritesOnly = _showFavoritesOnly.value)
+                    if (newSongs.isNotEmpty()) {
+                        val currentIds = _allSongs.value.mapTo(HashSet()) {
+                            it.mediaMetadata.extras?.getString("navidromeID") ?: it.mediaId
+                        }
+                        val distinctNew = newSongs.filter {
+                            val id = it.mediaMetadata.extras?.getString("navidromeID") ?: it.mediaId
+                            !currentIds.contains(id)
+                        }
+                        if (distinctNew.isNotEmpty()) {
+                            _allSongs.value += distinctNew
+                        }
+                    }
+                }
+            } finally {
+                isFetchingMore = false
             }
-            _isLoading.value = false
         }
     }
 

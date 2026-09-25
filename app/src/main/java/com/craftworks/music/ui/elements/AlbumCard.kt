@@ -33,7 +33,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
-import coil.compose.SubcomposeAsyncImage
+import coil.compose.AsyncImage
 import coil.request.ImageRequest
 
 @Stable
@@ -46,6 +46,7 @@ fun AlbumCard(
 ) {
     if (album.mediaMetadata.mediaType != MediaMetadata.MEDIA_TYPE_ALBUM) return
     val context = LocalContext.current
+    val cacheKey = album.mediaMetadata.extras?.getString("navidromeID") ?: album.mediaId
     Column(
         modifier = modifier
             //.padding(12.dp, 0.dp, 0.dp, 0.dp)
@@ -60,13 +61,12 @@ fun AlbumCard(
                 .fillMaxWidth()
                 .aspectRatio(1f)
         ) {
-            SubcomposeAsyncImage(
+            AsyncImage(
                 model = ImageRequest.Builder(context)
                     .data(album.mediaMetadata.artworkUri)
-                    .crossfade(true)
-                    .diskCacheKey(
-                        album.mediaMetadata.extras?.getString("navidromeID") ?: album.mediaId
-                    )
+                    .memoryCacheKey(cacheKey)
+                    .diskCacheKey(cacheKey)
+                    .crossfade(false)
                     .build(),
                 contentDescription = "Album Image",
                 contentScale = ContentScale.Crop,

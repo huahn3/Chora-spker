@@ -35,7 +35,10 @@ import androidx.media3.session.MediaController
 import com.craftworks.music.R
 import com.craftworks.music.managers.settings.OLEDProtectionMode
 import com.craftworks.music.player.ChoraMediaLibraryService
+import com.craftworks.music.ui.elements.dialogs.AddSongToPlaylist
 import com.craftworks.music.ui.elements.dialogs.RatingDialog
+import com.craftworks.music.ui.elements.dialogs.showAddSongToPlaylistDialog
+import com.craftworks.music.ui.elements.dialogs.songToAddToPlaylist
 import com.craftworks.music.ui.playing.tv.TvNowPlaying
 
 enum class NowPlayingAlignment {
@@ -64,12 +67,17 @@ fun NowPlayingContent(
         ?: remember { mutableIntStateOf(0) }
     val colors by viewModel.paletteColors.collectAsStateWithLifecycle()
     val iconTextColor by viewModel.iconTextColor.collectAsStateWithLifecycle()
+    val isStarred by viewModel.isStarred.collectAsStateWithLifecycle()
 
     val isSystemDark = if (oledProtectionMode != OLEDProtectionMode.OFF) true
         else isSystemInDarkTheme()
 
     LaunchedEffect(metadata?.artworkUri, backgroundStyle) {
         viewModel.updatePaletteFromUri(metadata?.artworkUri, backgroundStyle, isSystemDark)
+    }
+
+    LaunchedEffect(metadata?.extras?.getString("navidromeID")) {
+        viewModel.updateStarredStatus(metadata)
     }
 
     val targetOverlayColor = when {
@@ -102,13 +110,20 @@ fun NowPlayingContent(
             mediaController = mediaController,
             metadata = metadata,
             iconColor = iconTextColor,
-            lyricsOpen = lyricsOpen,
+            isStarred = isStarred,
             sleepTimerMinutes = sleepTimerMinutes,
-            onToggleLyrics = { viewModel.setLyricsOpen(!lyricsOpen) },
+            onToggleFavorite = { viewModel.toggleStar(metadata) },
+            onAddToPlaylist = {
+                val item = mediaController?.currentMediaItem
+                if (item != null) {
+                    songToAddToPlaylist.value = item
+                    showAddSongToPlaylistDialog.value = true
+                }
+            },
             onToggleQueue = { viewModel.setPlayQueueOpen(!playQueueOpen) },
             onToggleDetails = { viewModel.setDetailsOpen(!detailsOpen) },
             onOpenSleepTimer = { viewModel.setSleepTimerDialogOpen(true) },
-            onRefreshLyrics =  { viewModel.refreshLyrics(metadata) }
+            onRefreshLyrics = { viewModel.refreshLyrics(metadata) }
         )
     }
 
@@ -132,12 +147,16 @@ fun NowPlayingContent(
             sheetState = playQueueSheetState,
         ) {
             NowPlayingDetails(
-                isStarred = false,
+                isStarred = isStarred,
                 currentRating = (metadata?.userRating as? StarRating)?.starRating?.toInt() ?: 0,
                 onOpenRating = { showRatingDialog = true }
             )
             Spacer(modifier = Modifier.height(16.dp))
         }
+    }
+
+    if (showAddSongToPlaylistDialog.value) {
+        AddSongToPlaylist(setShowDialog = { showAddSongToPlaylistDialog.value = it })
     }
 
     if (sleepTimerOpen) {

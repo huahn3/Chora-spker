@@ -15,6 +15,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.animateIntAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.focusGroup
@@ -229,6 +230,36 @@ class MainActivity : ComponentActivity() {
                     // Set background color to colorScheme.background
                     window.decorView.setBackgroundColor(MaterialTheme.colorScheme.background.toArgb())
 
+                    var lastBackPressTime = 0L
+                    val exitBackCallback = object : OnBackPressedCallback(true) {
+                        override fun handleOnBackPressed() {
+                            if (navController.previousBackStackEntry != null) {
+                                navController.popBackStack()
+                                return
+                            }
+                            val currentTime = System.currentTimeMillis()
+                            if (currentTime - lastBackPressTime < 2000) {
+                                val service = ChoraMediaLibraryService.getInstance()
+                                service?.let { svc ->
+                                    val p = svc.player
+                                    if (p.isPlaying) {
+                                        p.pause()
+                                    }
+                                    svc.saveState(sync = true)
+                                }
+                                finishAffinity()
+                            } else {
+                                lastBackPressTime = currentTime
+                                android.widget.Toast.makeText(
+                                    this@MainActivity,
+                                    getString(R.string.press_again_to_exit),
+                                    android.widget.Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        }
+                    }
+                    onBackPressedDispatcher.addCallback(this, exitBackCallback)
+
                     val backCallback = object : OnBackPressedCallback(false) {
                         override fun handleOnBackPressed() {
                             coroutineScope.launch {
@@ -260,6 +291,25 @@ class MainActivity : ComponentActivity() {
                                     val coroutineScope = rememberCoroutineScope()
 
                                     Box {
+                                        val isFullExpanded by remember {
+                                            derivedStateOf { scaffoldState.bottomSheetState.targetValue == SheetValue.Expanded }
+                                        }
+                                        val fullPlayerAlpha by animateFloatAsState(
+                                            targetValue = if (isFullExpanded) 1f else 0f,
+                                            animationSpec = tween(300),
+                                            label = "FullPlayerAlpha"
+                                        )
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .graphicsLayer { alpha = fullPlayerAlpha }
+                                        ) {
+                                            NowPlayingContent(
+                                                mediaController = mediaController,
+                                                metadata = metadata
+                                            )
+                                        }
+
                                         NowPlayingMiniPlayer(
                                             scaffoldState = scaffoldState,
                                             metadata = metadata,
@@ -268,12 +318,6 @@ class MainActivity : ComponentActivity() {
                                                     scaffoldState.bottomSheetState.expand()
                                                 }
                                             })
-
-                                        println("Recomposing sheetcontent")
-                                        NowPlayingContent(
-                                            mediaController = mediaController,
-                                            metadata = metadata
-                                        )
                                     }
 
                                     val currentView = LocalView.current
@@ -396,26 +440,22 @@ class MainActivity : ComponentActivity() {
             IMPORTANCE_LOW
         )
 
-        // SAVE SETTINGS ON APP EXIT
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
-                override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) { }
-                override fun onActivityStarted(activity: Activity) { }
-                override fun onActivityResumed(activity: Activity) { }
-                override fun onActivityPaused(activity: Activity) { }
-                override fun onActivityPreStopped(activity: Activity) { }
-                override fun onActivityStopped(activity: Activity) { }
-                override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) { }
+    }
 
-                @androidx.annotation.OptIn(UnstableApi::class)
-                override fun onActivityDestroyed(activity: Activity) {
-                    ChoraMediaLibraryService.getInstance()?.saveState()
-
-                    this@MainActivity.stopService(serviceIntent)
-                    println("Destroyed, Goodbye :(")
-                }
-            })
+    @androidx.annotation.OptIn(UnstableApi::class)
+    override fun onDestroy() {
+        Log.d("MAIN_ACTIVITY", "onDestroy called - closing app")
+        val service = ChoraMediaLibraryService.getInstance()
+        service?.let { svc ->
+            val p = svc.player
+            if (p.isPlaying) {
+                p.pause()
+            }
+            svc.saveState(sync = true)
         }
+        stopService(Intent(this, ChoraMediaLibraryService::class.java))
+        println("Destroyed, Goodbye :(")
+        super.onDestroy()
     }
 }
 

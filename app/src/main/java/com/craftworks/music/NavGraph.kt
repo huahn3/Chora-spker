@@ -169,6 +169,7 @@ fun SetupNavGraph(
                 viewModel = viewModel,
                 categoryKey = category,
                 navHostController = navController,
+                mediaController = mediaController
             )
         }
 

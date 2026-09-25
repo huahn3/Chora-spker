@@ -1,35 +1,60 @@
 package com.craftworks.music.ui.playing
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.animateIntAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.wrapContentWidth
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material3.BottomSheetScaffoldState
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SheetValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberBottomSheetScaffoldState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -37,11 +62,17 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import coil.compose.SubcomposeAsyncImage
 import coil.request.ImageRequest
+import com.craftworks.music.R
+import com.craftworks.music.data.repository.LyricsState
 import com.craftworks.music.player.ChoraMediaLibraryService
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 
 @androidx.annotation.OptIn(UnstableApi::class)
 @OptIn(ExperimentalMaterial3Api::class)
@@ -60,79 +91,266 @@ fun NowPlayingMiniPlayer(
         label = "Fullscreen Translation"
     )
 
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier
-        .offset { IntOffset(x = 0, y = -yTrans) }
-        .zIndex(1f)
-        .background(MaterialTheme.colorScheme.surfaceContainer)
-        .height(72.dp)
-        .fillMaxWidth()
-        .padding(horizontal = 12.dp)
-        .clickable {
-            onClick.invoke()
-        }
-    ) {
-        // Album Image
-        SubcomposeAsyncImage(
-            model = ImageRequest.Builder(LocalContext.current)
-                .data(metadata?.artworkUri)
-                .diskCacheKey(
-                    metadata?.extras?.getString("navidromeID")
-                )
-                .crossfade(true)
-                .build(),
-            contentDescription = "Album Cover",
-            contentScale = ContentScale.FillWidth,
-            alignment = Alignment.Center,
-            modifier = Modifier
-                .size(48.dp)
-                .clip(RoundedCornerShape(6.dp))
-        )
+    val miniPlayerAlpha by animateFloatAsState(
+        targetValue = if (expanded) 0f else 1f,
+        animationSpec = tween(200),
+        label = "MiniPlayerAlpha"
+    )
 
-        // Title + Artist
-        Column(
-            modifier = Modifier
-                .padding(horizontal = 12.dp)
-                .weight(1f)
-        ) {
-            Text(
-                text = metadata?.title.toString(),
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onBackground,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                textAlign = TextAlign.Start,
-                modifier = Modifier.fillMaxWidth()
-            )
-            Row(modifier = Modifier.width(IntrinsicSize.Max)) {
-                Text(
-                    text = metadata?.artist.toString(),
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Light,
-                    color = MaterialTheme.colorScheme.onBackground,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    textAlign = TextAlign.Start,
-                    modifier = Modifier.weight(1f)
-                )
-                if (metadata?.recordingYear != 0 && metadata?.mediaType != MediaMetadata.MEDIA_TYPE_RADIO_STATION) {
-                    Text(
-                        text = " • " + metadata?.recordingYear.toString(),
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.Light,
-                        color = MaterialTheme.colorScheme.onBackground,
-                        maxLines = 1,
-                        modifier = Modifier.wrapContentWidth()
-                    )
-                }
+    val service = ChoraMediaLibraryService.getInstance()
+    val player = service?.player
+
+    var isPlaying by remember { mutableStateOf(player?.isPlaying == true) }
+    var currentPosition by remember { mutableLongStateOf(player?.currentPosition ?: 0L) }
+    var duration by remember { mutableLongStateOf(player?.duration?.coerceAtLeast(1L) ?: 1L) }
+
+    var showControls by remember { mutableStateOf(true) }
+    var lastActionTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
+
+    // Synchronize player state and events
+    DisposableEffect(player) {
+        if (player == null) return@DisposableEffect onDispose { }
+        val listener = object : Player.Listener {
+            override fun onIsPlayingChanged(playing: Boolean) {
+                isPlaying = playing
+                lastActionTime = System.currentTimeMillis()
+            }
+            override fun onPlaybackStateChanged(state: Int) {
+                duration = player.duration.coerceAtLeast(1L)
+            }
+            override fun onPositionDiscontinuity(
+                oldPosition: Player.PositionInfo,
+                newPosition: Player.PositionInfo,
+                reason: Int
+            ) {
+                currentPosition = newPosition.positionMs
+                lastActionTime = System.currentTimeMillis()
             }
         }
+        player.addListener(listener)
+        isPlaying = player.isPlaying
+        currentPosition = player.currentPosition
+        duration = player.duration.coerceAtLeast(1L)
+        onDispose {
+            player.removeListener(listener)
+        }
+    }
 
-        ChoraMediaLibraryService.getInstance()?.player?.let {
-            PlayPauseButton(
-                it,
-                MaterialTheme.colorScheme.onBackground,
-                Modifier.size(48.dp)
-            )
+    // Continuous ticker for progress & synced lyrics while playing
+    LaunchedEffect(isPlaying, player) {
+        while (isActive && isPlaying && player != null) {
+            currentPosition = player.currentPosition
+            delay(200L)
+        }
+    }
+
+    // Auto-hide control icon on cover: shows on start / song change / action, then hides after 3 seconds
+    val songId = metadata?.extras?.getString("navidromeID")
+    LaunchedEffect(songId, lastActionTime, isPlaying) {
+        showControls = true
+        delay(3000L)
+        showControls = false
+    }
+
+    val lyrics by LyricsState.lyrics.collectAsStateWithLifecycle()
+
+    // Calculate current and upcoming lyric
+    val activeLyricIndex = remember(lyrics, currentPosition) {
+        if (lyrics.isEmpty()) -1
+        else lyrics.indexOfLast { it.startMs <= currentPosition }
+    }
+    val currentLyric = if (activeLyricIndex in lyrics.indices) lyrics[activeLyricIndex] else null
+    val currentLyricText = currentLyric?.text?.firstOrNull { it.isNotBlank() }
+    val nextLyric = lyrics.getOrNull(activeLyricIndex + 1)
+    val nextLyricText = nextLyric?.text?.firstOrNull { it.isNotBlank() }
+
+    Box(
+        modifier = Modifier
+            .offset { IntOffset(x = 0, y = -yTrans) }
+            .zIndex(2f)
+            .fillMaxWidth()
+            .graphicsLayer {
+                alpha = miniPlayerAlpha
+            }
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(72.dp)
+                .background(MaterialTheme.colorScheme.surfaceContainer)
+                .clickable(enabled = !expanded) { onClick.invoke() }
+                .padding(horizontal = 12.dp)
+        ) {
+            // Album Art with Circular Progress & 3-Second Auto-Hide Play/Pause Control
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(52.dp)
+                    .clip(CircleShape)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        enabled = !expanded
+                    ) {
+                        // Tapping cover toggles play/pause even when icon is hidden, resets 3s timer
+                        lastActionTime = System.currentTimeMillis()
+                        player?.let {
+                            if (it.isPlaying) it.pause() else it.play()
+                        }
+                    }
+            ) {
+                // Circular progress ring tracking playback
+                val progress = (currentPosition.toFloat() / duration.toFloat()).coerceIn(0f, 1f)
+                CircularProgressIndicator(
+                    progress = { progress },
+                    modifier = Modifier.size(48.dp),
+                    color = MaterialTheme.colorScheme.primary,
+                    trackColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                    strokeWidth = 2.5.dp
+                )
+
+                // Round album cover
+                SubcomposeAsyncImage(
+                    model = ImageRequest.Builder(LocalContext.current)
+                        .data(metadata?.artworkUri)
+                        .diskCacheKey(songId)
+                        .crossfade(true)
+                        .build(),
+                    contentDescription = "Album Cover",
+                    contentScale = ContentScale.Crop,
+                    alignment = Alignment.Center,
+                    modifier = Modifier
+                        .size(42.dp)
+                        .clip(CircleShape)
+                )
+
+                // Play / Pause Overlay Icon (Visible for 3s on start/action, then fades out smoothly)
+                val controlsAlpha by animateFloatAsState(
+                    targetValue = if (showControls) 1f else 0f,
+                    animationSpec = tween(300),
+                    label = "ControlsAlpha"
+                )
+
+                if (controlsAlpha > 0.01f) {
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .size(42.dp)
+                            .clip(CircleShape)
+                            .graphicsLayer { alpha = controlsAlpha }
+                            .background(Color.Black.copy(alpha = 0.45f))
+                    ) {
+                        Icon(
+                            imageVector = if (isPlaying) {
+                                ImageVector.vectorResource(R.drawable.media3_notification_pause)
+                            } else {
+                                Icons.Rounded.PlayArrow
+                            },
+                            contentDescription = if (isPlaying) "Pause" else "Play",
+                            tint = Color.White,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                }
+            }
+
+            // Middle Section: Scrolling lyrics during playback / Title & Artist when paused
+            Column(
+                modifier = Modifier
+                    .padding(horizontal = 12.dp)
+                    .weight(1f)
+            ) {
+                if (isPlaying && !currentLyricText.isNullOrBlank()) {
+                    // PLAYING WITH SYNCED LYRICS: Smoothly animated rolling lyrics
+                    AnimatedContent(
+                        targetState = currentLyricText,
+                        transitionSpec = {
+                            (slideInVertically { height -> height / 2 } + fadeIn(tween(250)))
+                                .togetherWith(slideOutVertically { height -> -height / 2 } + fadeOut(tween(250)))
+                        },
+                        label = "MiniPlayerLyric"
+                    ) { lyric ->
+                        Text(
+                            text = lyric,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            textAlign = TextAlign.Start,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .basicMarquee()
+                        )
+                    }
+
+                    val subText = nextLyricText ?: metadata?.artist?.toString() ?: ""
+                    if (subText.isNotBlank()) {
+                        Text(
+                            text = subText,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Normal,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            textAlign = TextAlign.Start,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .basicMarquee()
+                        )
+                    }
+                } else {
+                    // PAUSED OR NO LYRICS AVAILABLE: Song Title & Artist Info
+                    Text(
+                        text = metadata?.title?.toString() ?: "",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = TextAlign.Start,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .basicMarquee()
+                    )
+                    Row(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            text = metadata?.artist?.toString() ?: "",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Normal,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            textAlign = TextAlign.Start,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+                        if (metadata?.recordingYear != 0 && metadata?.mediaType != MediaMetadata.MEDIA_TYPE_RADIO_STATION) {
+                            Text(
+                                text = " • " + metadata?.recordingYear.toString(),
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.Normal,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
+                                maxLines = 1
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Right side: Queue / Playlist button (matching design)
+            IconButton(
+                onClick = onClick,
+                enabled = !expanded,
+                modifier = Modifier.size(40.dp)
+            ) {
+                Icon(
+                    imageVector = ImageVector.vectorResource(R.drawable.rounded_queue_music_24),
+                    contentDescription = "Queue",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
         }
     }
 }

@@ -102,13 +102,16 @@ fun AddSongToPlaylist(
                 ) {
 
                     // Header
+                    val dialogParts = stringResource(R.string.Dialog_Add_To_Playlist).split("/")
                     Text(
                         text = buildAnnotatedString {
-                            append(stringResource(R.string.Dialog_Add_To_Playlist).split("/")[0])
+                            append(dialogParts.getOrElse(0) { "" })
                             withStyle(SpanStyle(fontStyle = FontStyle.Italic)) {
-                                append(songToAddToPlaylist.value.mediaMetadata.title)
+                                append(songToAddToPlaylist.value.mediaMetadata.title ?: "")
                             }
-                            append(stringResource(R.string.Dialog_Add_To_Playlist).split("/")[1])
+                            if (dialogParts.size > 1) {
+                                append(dialogParts[1])
+                            }
                         },
                         style = TextStyle(
                             fontSize = MaterialTheme.typography.headlineSmall.fontSize,

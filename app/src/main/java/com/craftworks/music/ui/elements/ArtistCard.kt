@@ -26,7 +26,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import coil.compose.SubcomposeAsyncImage
+import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.craftworks.music.R
 import com.craftworks.music.data.model.MediaData
@@ -34,6 +34,7 @@ import com.craftworks.music.data.model.MediaData
 @Stable
 @Composable
 fun ArtistCard(artist: MediaData.Artist, onClick: () -> Unit) {
+    val cacheKey = artist.navidromeID
     Column(
         modifier = Modifier
             //.padding(12.dp)
@@ -44,35 +45,22 @@ fun ArtistCard(artist: MediaData.Artist, onClick: () -> Unit) {
             .wrapContentHeight(),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        SubcomposeAsyncImage (
+        AsyncImage (
             model = ImageRequest.Builder(LocalContext.current)
                 .data(artist.artistImageUrl)
-                .crossfade(true)
-                .diskCacheKey(
-                    artist.navidromeID
-                )
+                .memoryCacheKey(cacheKey)
+                .diskCacheKey(cacheKey)
+                .crossfade(false)
+                .error(R.drawable.rounded_artist_24)
+                .fallback(R.drawable.rounded_artist_24)
                 .build(),
             contentScale = ContentScale.Crop,
-            contentDescription = "Album Image",
+            contentDescription = "Artist Image",
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(1f)
-                .clip(RoundedCornerShape(12.dp)),
-            loading = { painter ->
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(MaterialTheme.colorScheme.surfaceVariant)
-                        .clip(RoundedCornerShape(8.dp))
-                )
-            },
-            error = { painter ->
-                Icon(
-                    painter = painterResource(id = R.drawable.rounded_artist_24),
-                    contentDescription = "Artist Icon",
-                    modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant)
-                )
-            },
+                .clip(RoundedCornerShape(12.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant),
         )
 
         Spacer(modifier = Modifier.height(4.dp))

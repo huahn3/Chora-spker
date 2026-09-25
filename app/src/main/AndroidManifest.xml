@@ -65,6 +65,7 @@
         <service
             android:name=".player.ChoraMediaLibraryService"
             android:foregroundServiceType="mediaPlayback"
+            android:stopWithTask="true"
             android:exported="true">
             <intent-filter>
                 <action android:name="androidx.media3.session.MediaLibraryService"/>
@@ -82,5 +83,40 @@
             </intent-filter>
         </receiver>
 
+        <!-- Desktop Widgets -->
+        <receiver
+            android:name=".widgets.MusicWidget4x2Provider"
+            android:exported="true"
+            android:label="@string/widget_4x2_name">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/music_widget_4x2_info" />
+        </receiver>
+
+        <receiver
+            android:name=".widgets.MusicWidget2x2Provider"
+            android:exported="true"
+            android:label="@string/widget_2x2_name">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/music_widget_2x2_info" />
+        </receiver>
+
+        <receiver
+            android:name=".widgets.MusicWidgetActionReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.craftworks.music.action.WIDGET_PLAY_PAUSE" />
+                <action android:name="com.craftworks.music.action.WIDGET_PREVIOUS" />
+                <action android:name="com.craftworks.music.action.WIDGET_NEXT" />
+                <action android:name="com.craftworks.music.action.WIDGET_UPDATE" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>

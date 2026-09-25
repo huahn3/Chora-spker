@@ -7,4 +7,12 @@
     <string name="settings">设置</string>
     <string name="radios">网络电台</string>
     <string name="playlists">歌单</string>
+    <!-- Widgets -->
+    <string name="widget_4x2_name">Chora 音乐 (4×2)</string>
+    <string name="widget_4x2_desc">带专辑封面的音乐控制小组件</string>
+    <string name="widget_2x2_name">Chora 音乐 (2×2)</string>
+    <string name="widget_2x2_desc">紧凑型方形音乐小组件</string>
+    <string name="widget_no_playing">暂未播放</string>
+    <string name="widget_tap_to_open">点击打开 Chora</string>
+    <string name="press_again_to_exit">再按一次退出应用</string>
 </resources>

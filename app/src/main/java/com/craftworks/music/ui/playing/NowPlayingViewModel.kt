@@ -22,6 +22,7 @@ import coil.request.SuccessResult
 import com.craftworks.music.data.repository.LyricsRepository
 import com.craftworks.music.data.repository.SongRepository
 import com.craftworks.music.managers.settings.AppearanceSettingsManager
+import com.craftworks.music.data.repository.StarredRepository
 import com.craftworks.music.managers.settings.PlaybackSettingsManager
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -40,7 +41,11 @@ class NowPlayingViewModel @Inject constructor (
     val lyricsRepository: LyricsRepository,
     val appearanceSettingsManager: AppearanceSettingsManager,
     val playbackSettingsManager: PlaybackSettingsManager,
+    val starredRepository: StarredRepository,
 ) : ViewModel() {
+    private val _isStarred = MutableStateFlow(false)
+    val isStarred = _isStarred.asStateFlow()
+
     private val _lyricsOpen = MutableStateFlow(false)
     val lyricsOpen = _lyricsOpen.asStateFlow()
 
@@ -82,6 +87,41 @@ class NowPlayingViewModel @Inject constructor (
     fun refreshLyrics(mediaMetadata: MediaMetadata?) {
         viewModelScope.launch {
             lyricsRepository.getLyrics(mediaMetadata, true)
+        }
+    }
+
+    fun updateStarredStatus(mediaMetadata: MediaMetadata?) {
+        val navId = mediaMetadata?.extras?.getString("navidromeID") ?: ""
+        val initialStarred = mediaMetadata?.extras?.getString("starred")?.isNotEmpty() == true
+        _isStarred.value = initialStarred
+
+        if (navId.isNotBlank()) {
+            viewModelScope.launch {
+                try {
+                    val starredList = starredRepository.getStarredItems(false)
+                    val isSongStarred = starredList.any { item ->
+                        item.mediaMetadata.extras?.getString("navidromeID") == navId || item.mediaId == navId
+                    }
+                    _isStarred.value = isSongStarred
+                } catch (_: Exception) {}
+            }
+        }
+    }
+
+    fun toggleStar(mediaMetadata: MediaMetadata?) {
+        val navId = mediaMetadata?.extras?.getString("navidromeID") ?: return
+        val targetStarred = !_isStarred.value
+        _isStarred.value = targetStarred
+        viewModelScope.launch {
+            try {
+                if (targetStarred) {
+                    starredRepository.starItem(id = navId, ignoreCachedResponse = true)
+                } else {
+                    starredRepository.unStarItem(id = navId, ignoreCachedResponse = true)
+                }
+            } catch (e: Exception) {
+                _isStarred.value = !targetStarred
+            }
         }
     }
 
