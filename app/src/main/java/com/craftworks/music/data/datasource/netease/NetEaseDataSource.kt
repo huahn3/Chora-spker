@@ -81,7 +81,10 @@ class NeteaseDataSource @Inject constructor(
     suspend fun getNeteaseLyrics(metadata: MediaMetadata?): List<Lyric> = withContext(Dispatchers.IO) {
         try {
             val title  = metadata?.title?.toString() ?: return@withContext emptyList()
-            val artist = metadata.extras?.getString("lyricsArtist") ?: ""
+            val artist = metadata.extras?.getString("lyricsArtist")
+                ?.takeIf { it.isNotBlank() }
+                ?: metadata.artist?.toString()
+                ?: ""
 
             val songId = searchSongId(title, artist) ?: return@withContext emptyList()
             val lyricsResponse = fetchLyrics(songId)

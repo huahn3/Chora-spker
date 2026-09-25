@@ -198,12 +198,25 @@ fun NeteaseLyricsResponse.toLyrics(): List<Lyric> {
 
 fun mmssToMilliseconds(mmss: String): Long {
     val parts = mmss.split(":", ".")
-    if (parts.size == 3) {
+    if (parts.size >= 3) {
         try {
             val minutes = parts[0].toLong()
             val seconds = parts[1].toLong()
-            val ms = parts[2].substring(0,2).toLong()
-            return (minutes * 60 + seconds) * 1000 + ms * 10
+            val msRaw = parts[2]
+            val ms = when (msRaw.length) {
+                1 -> msRaw.toLong() * 100
+                2 -> msRaw.toLong() * 10
+                else -> msRaw.substring(0, 3).toLong()
+            }
+            return (minutes * 60 + seconds) * 1000 + ms
+        } catch (e: NumberFormatException) {
+            e.printStackTrace()
+        }
+    } else if (parts.size == 2) {
+        try {
+            val minutes = parts[0].toLong()
+            val seconds = parts[1].toLong()
+            return (minutes * 60 + seconds) * 1000
         } catch (e: NumberFormatException) {
             e.printStackTrace()
         }
@@ -221,4 +234,57 @@ fun getTimeStamps(input: String): List<String> {
     }
 
     return result
+}
+
+fun parseLrc(content: String): List<Lyric> {
+    if (content.isBlank()) return emptyList()
+    val raw = mutableListOf<Pair<Int, String>>()
+    val lines = content.lines()
+    for (line in lines) {
+        val trimmed = line.trim()
+        if (trimmed.isEmpty()) continue
+        val tags = getTimeStamps(trimmed)
+        if (tags.isEmpty()) continue
+        val text = trimmed.substringAfterLast("]").trim()
+        for (tag in tags) {
+            val ms = mmssToMilliseconds(tag).toInt()
+            raw.add(Pair(ms, text))
+        }
+    }
+    if (raw.isNotEmpty()) {
+        return raw.groupBy { it.first }
+            .map { (time, pairs) -> Lyric(time, pairs.map { it.second }.filter { it.isNotBlank() }) }
+            .filter { it.text.isNotEmpty() }
+            .sortedBy { it.startMs }
+    }
+    val plainLines = lines.map { it.trim() }.filter { it.isNotBlank() && !it.startsWith("[") }
+    if (plainLines.isNotEmpty()) {
+        return listOf(Lyric(startMs = -1, text = plainLines))
+    }
+    return emptyList()
+}
+
+fun List<Lyric>.toLrcString(): String {
+    val sb = StringBuilder()
+    for (lyric in this) {
+        if (lyric.startMs >= 0) {
+            val totalSeconds = lyric.startMs / 1000
+            val minutes = totalSeconds / 60
+            val seconds = totalSeconds % 60
+            val millis = (lyric.startMs % 1000) / 10
+            val timeTag = String.format("[%02d:%02d.%02d]", minutes, seconds, millis)
+            for (line in lyric.text) {
+                if (line.isNotBlank()) {
+                    sb.append(timeTag).append(line).append("\n")
+                }
+            }
+        } else {
+            for (line in lyric.text) {
+                if (line.isNotBlank()) {
+                    sb.append(line).append("\n")
+                }
+            }
+        }
+    }
+    return sb.toString()
 }

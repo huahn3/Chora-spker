@@ -15,4 +15,26 @@
     <string name="widget_no_playing">暂未播放</string>
     <string name="widget_tap_to_open">点击打开 Chora</string>
     <string name="press_again_to_exit">再按一次退出应用</string>
+    <string name="downloaded_music">下载音乐</string>
+    <string name="downloaded_music_desc">离线收听已下载的本地歌曲</string>
+    <string name="no_downloaded_music">暂无下载音乐</string>
+    <string name="no_downloaded_music_desc">下载后的歌曲将保存在此，没网也能随时收听</string>
+    <string name="play_all">播放全部</string>
+    <string name="shuffle">随机播放</string>
+    <string name="delete_from_device">从本地删除</string>
+    <string name="play_next">下一首播放</string>
+    <string name="add_to_queue">添加到播放队列</string>
+    <string name="manage_local_folders">本地目录管理</string>
+    <string name="add_local_folder">添加本地目录</string>
+    <string name="local_folder_desc">管理用于离线播放的本地音乐文件夹</string>
+    <string name="select_folder_saf">选择文件夹 (SAF)</string>
+    <string name="manual_folder_path">手动输入路径</string>
+    <string name="folder_path_hint">例如: /storage/emulated/0/Music</string>
+    <string name="all_filter">全部</string>
+    <string name="downloaded_filter">已下载</string>
+    <string name="local_folders_filter">本地目录</string>
+    <string name="source_downloaded">已下载</string>
+    <string name="source_local_folder">本地目录</string>
+    <string name="no_local_folders">暂无本地目录</string>
+    <string name="no_local_folders_prompt">点击右上角文件夹图标可添加手机中的本地音乐目录</string>
 </resources>

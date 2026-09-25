@@ -26,20 +26,43 @@ fun downloadNavidromeSong(
     val url = "$baseUrl/rest/download.view?id=${song.extras?.getString("navidromeID")}&u=${server.username}&t=$passwordHash&s=$passwordSalt&v=1.16.1&c=Chora".toUri()
 
     val extension = song.extras?.getString("format") ?: "mp3"
-    val fileName = "${song.title} - ${song.artist}.$extension"
+    val songId = song.extras?.getString("navidromeID") ?: ""
+    val title = song.title?.toString() ?: "Unknown"
+    val artist = song.artist?.toString() ?: "Unknown"
+    val album = song.albumTitle?.toString() ?: albumName ?: "Unknown"
+    val fileName = "$title - $artist.$extension"
 
     val relativePath = if (!albumName.isNullOrBlank()) {
-        "$albumName${File.separator}$fileName"
+        "Chora${File.separator}$albumName${File.separator}$fileName"
     } else {
-        fileName
+        "Chora${File.separator}$fileName"
     }
 
     val request = DownloadManager.Request(url)
-        .setTitle("${context.getString(R.string.Notification_Download_Name)} ${song.title}")
+        .setTitle("${context.getString(R.string.Notification_Download_Name)} $title")
         .setDescription(context.getString(R.string.Notification_Download_Desc))
         .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
         .setDestinationInExternalPublicDir(Environment.DIRECTORY_MUSIC, relativePath)
 
     val manager = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-    manager.enqueue(request)
+    val downloadId = manager.enqueue(request)
+
+    com.craftworks.music.managers.DownloadedSongsManager.recordDownload(
+        songId = songId,
+        title = title,
+        artist = artist,
+        album = album,
+        relativePath = relativePath,
+        format = extension,
+        downloadId = downloadId
+    )
+
+    com.craftworks.music.managers.DownloadedSongsManager.fetchCompanionAssets(
+        context = context,
+        server = server,
+        songId = songId,
+        title = title,
+        artist = artist,
+        relativePath = relativePath
+    )
 }

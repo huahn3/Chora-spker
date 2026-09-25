@@ -1,34 +1,73 @@
 ![Logo](https://github.com/CraftWorksMC/Chora/blob/master/Github/Images/ChoraBannerTransparent.png?raw=true)
 
-A simple and light-weight app that streams music from a Subsonic or Navidrome server, or from the phone's storage.
+# Chora - Modern Navidrome & Local Music Player
 
-*Please do not use as a learning resource. This was my first Kotlin project, and the code is not well-organized at all. AI was used earlier in development (and it shows, the code is a mess lol)*
+A fast, lightweight, and modern music streaming client for Android and Android TV, built with Jetpack Compose and AndroidX Media3. Stream high-fidelity audio from Subsonic/Navidrome servers or listen to local music with seamless offline caching, synchronized lyrics, and dynamic Material You aesthetics.
 
-<a href='https://play.google.com/store/apps/details?id=com.craftworks.music&pcampaignid=pcampaignidMKT-Other-global-all-co-prtnr-py-PartBadge-Mar2515-1'><img width=256px alt='Get it on Google Play' src='https://play.google.com/intl/en_us/badges/static/images/badges/en_badge_web_generic.png'/></a>
+<p align="center">
+  <a href='https://play.google.com/store/apps/details?id=com.craftworks.music&pcampaignid=pcampaignidMKT-Other-global-all-co-prtnr-py-PartBadge-Mar2515-1'><img width=180px alt='Get it on Google Play' src='https://play.google.com/intl/en_us/badges/static/images/badges/en_badge_web_generic.png'/></a>
+  &nbsp;&nbsp;
+  <a href="https://f-droid.org/packages/com.craftworks.music/"><img src="https://fdroid.gitlab.io/artwork/badge/get-it-on.png" alt="Get it on F-Droid" height="54"></a>
+</p>
 
-[<img src="https://fdroid.gitlab.io/artwork/badge/get-it-on.png"
-alt="Get it on F-Droid"
-height="80">](https://f-droid.org/packages/com.craftworks.music/)
+---
 
-## Features
+## ✨ Features
 
-- Subsonic/Navidrome support.
-- Android Auto.
-- Android TV.
-- Material 3 UI.
-- Download songs and albums from server.
-- Internet Radio.
-- Word Synced, Line Synced And Unsynced Lyrics. [From lrclib.net or self-hosted instance and NetEase]
-- Navidrome and Local playlists.
-- Multiple Navidrome libraries.
-- Transcoding.
+- 🎧 **Navidrome / Subsonic Protocol**: Full compatibility with Navidrome and Subsonic-compliant music servers (transcoding, token-based authentication, server cover art).
+- ⚡ **Local-First Resumption**: Instant 0ms startup without blank state; fast-loads last played track, album art, and progress accurately from DataStore.
+- 📱 **Modern Jetpack Compose UI**: Expressive Material 3 design, dynamic blur palette generation based on album art, interactive circular progress ring, and smooth spring animations.
+- 📺 **Android TV Support**: Optimized TV layout with D-Pad remote navigation, large album displays, and TV player interface.
+- 📝 **Synchronized Lyrics**: Word-synced, line-synced, and plain lyrics powered by LRCLIB and NetEase Music.
+- 🔄 **Cloudflare & Reverse Proxy Resilient**: Built-in HTTP 302 cross-protocol/cross-port sniffing to smoothly stream behind Cloudflare Tunnels and reverse proxies.
+- 🌐 **Offline Downloads & Local Library**: Download tracks and albums directly to your device for offline listening.
+- 🚗 **Android Auto Support**: Safe and responsive in-car playback.
 
-## Roadmap
+---
 
-- Jellyfin (music)
-- Chromecast
+## 🛠️ Architecture & Developer Guidelines
 
-## Screenshots
+For developers and AI coding assistants joining the project, comprehensive guides are available:
+
+- 📖 **Architecture Manual**: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- 🤖 **AI Assistant Skill**: [.agents/skills/chora-music-dev/SKILL.md](.agents/skills/chora-music-dev/SKILL.md)
+
+### 📌 Core Development Rules
+
+1. **Duration & Progress Fallback**:
+   Cold-starting ExoPlayer keeps it in `STATE_IDLE` where `player.duration` returns `C.TIME_UNSET` (negative). Never rely purely on `player.duration.coerceAtLeast(1L)`. Always use `effectiveDuration` falling back to `mediaMetadata.durationMs`.
+2. **Lazy Prepare Resumption**:
+   When restoring state on startup, assign `mediaItems` and `seekTo()` but keep `playWhenReady = false` without calling `prepare()`, eliminating background network bandwidth waste.
+3. **Dual BackHandler Structure**:
+   Full-screen expanded player (album cover/lyrics/queue) must intercept the system back key to smoothly collapse into the Mini Player (`scaffoldState.bottomSheetState.partialExpand()`), while collapsed states handle page navigation and double-tap home exit.
+
+---
+
+## 🚀 Quick Start & Building
+
+### Prerequisites
+- JDK 17 or higher
+- Android SDK Platform 35
+- Gradle 8.9+ (included via wrapper)
+
+### Build Commands
+```bash
+# 1. Assemble Debug APK
+./gradlew :app:assembleDebug --daemon
+
+# 2. Archive to root directory
+cp app/build/outputs/apk/debug/app-debug.apk music.apk
+
+# 3. Install to connected device or wireless ADB
+adb install -r music.apk
+
+# 4. Launch and test
+adb shell monkey -p com.craftworks.music -c android.intent.category.LAUNCHER 1
+```
+
+---
+
+## 📸 Screenshots
 
 ### Mobile
 <p align="center">
@@ -42,7 +81,7 @@ height="80">](https://f-droid.org/packages/com.craftworks.music/)
     <img src="https://github.com/CraftWorksMC/Chora/blob/master/Github/Images/SongScreen.png?raw=true" width=200>
 </p>
 
-### TV
+### Android TV
 <p align="left">
     <img src="https://github.com/CraftWorksMC/Chora/blob/master/fastlane/metadata/android/en-US/images/tvScreenshots/1.png?raw=true" width=400>
     <img src="https://github.com/CraftWorksMC/Chora/blob/master/fastlane/metadata/android/en-US/images/tvScreenshots/2.png?raw=true" width=400>
@@ -50,18 +89,11 @@ height="80">](https://f-droid.org/packages/com.craftworks.music/)
     <img src="https://github.com/CraftWorksMC/Chora/blob/master/fastlane/metadata/android/en-US/images/tvScreenshots/4.png?raw=true" width=400>
 </p>
 
-## Help translate!
+---
 
-Help translate on <a href="https://crowdin.com/project/chora">Crowdin</a>
+## 🌐 Community & Translations
 
-## Support the project
+- Help translate Chora on [Crowdin](https://crowdin.com/project/chora)
+- Support the upstream project: [PayPal Donation](https://www.paypal.com/donate/?hosted_button_id=REWCVJBKECU34)
 
-To help keep this project free and open source to everyone, consider donating. Thank you!  
-<a href="https://www.paypal.com/donate/?hosted_button_id=REWCVJBKECU34">
-  <img width=256px src="https://raw.githubusercontent.com/stefan-niedermann/paypal-donate-button/master/paypal-donate-button.png" alt="Donate with PayPal" />
-</a>
-
-Made with :heart: in Italy
-
-> Lyrics icon provided by [Remix Icon](https://remixicon.com/ "Remix Icon")
-> Other icons are provided by [Google Icons](https://fonts.google.com/icons "Google Icons")
+Made with ❤️ in Italy & enhanced by the Open Source Community.

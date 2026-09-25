@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -320,6 +321,15 @@ fun NavbarItemsDialog(setShowDialog: (Boolean) -> Unit) {
     val bottomNavigationItems =
         (AppearanceSettingsManager(context).bottomNavItemsFlow.collectAsState(null).value ?: emptyList()).toMutableList()
 
+    val navItemTitleMap = remember {
+        mapOf(
+            "Home" to "首页",
+            "Albums" to "专辑",
+            "Songs" to "歌曲",
+            "Playlists" to "播放列表"
+        )
+    }
+
     AlertDialog(
         onDismissRequest = { setShowDialog(false) },
         title = { Text(stringResource(R.string.Setting_Navbar_Items)) },
@@ -361,7 +371,7 @@ fun NavbarItemsDialog(setShowDialog: (Boolean) -> Unit) {
                                     .bounceClick()
                             )
                             Text(
-                                text = navItem.title,
+                                text = navItemTitleMap[navItem.title] ?: navItem.title,
                                 fontWeight = FontWeight.Normal,
                                 fontSize = MaterialTheme.typography.titleMedium.fontSize,
                                 color = MaterialTheme.colorScheme.onBackground,
@@ -606,6 +616,71 @@ fun NowPlayingTitleAlignmentDialog(
                             color = MaterialTheme.colorScheme.onBackground,
                             modifier = Modifier.fillMaxWidth()
                         )
+                    }
+                }
+            }
+        },
+        confirmButton = { }
+    )
+}
+
+@Composable
+@Preview
+fun PageTransitionStyleDialog(
+    setShowDialog: (Boolean) -> Unit = { },
+    title: String = "播放界面滑动动画",
+    selection: com.craftworks.music.managers.settings.PageTransitionStyle = com.craftworks.music.managers.settings.PageTransitionStyle.ELEGANT_SPRING,
+    onSet: (com.craftworks.music.managers.settings.PageTransitionStyle) -> Unit = { }
+) {
+    AlertDialog(
+        onDismissRequest = { setShowDialog(false) },
+        title = { Text(title) },
+        text = {
+            Column {
+                com.craftworks.music.managers.settings.PageTransitionStyle.entries.forEach { style ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .selectable(
+                                selected = (style == selection),
+                                onClick = {
+                                    onSet(style)
+                                    setShowDialog(false)
+                                },
+                                role = Role.RadioButton
+                            )
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = style == selection,
+                            onClick = {
+                                onSet(style)
+                                setShowDialog(false)
+                            },
+                            modifier = Modifier.bounceClick()
+                        )
+                        val (label, desc) = when (style) {
+                            com.craftworks.music.managers.settings.PageTransitionStyle.ELEGANT_SPRING -> "优雅平滑" to "自然阻尼，无回弹 (推荐)"
+                            com.craftworks.music.managers.settings.PageTransitionStyle.CUBIC_BEZIER -> "经典缓动" to "贝塞尔平滑缓动"
+                            com.craftworks.music.managers.settings.PageTransitionStyle.SNAPPY -> "干脆利落" to "快速无延迟切换"
+                            com.craftworks.music.managers.settings.PageTransitionStyle.GENTLE -> "柔和渐进" to "节奏从容，柔和过渡"
+                        }
+
+                        Column(modifier = Modifier.fillMaxWidth().padding(start = 4.dp)) {
+                            Text(
+                                text = label,
+                                fontWeight = FontWeight.SemiBold,
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onBackground
+                            )
+                            Text(
+                                text = desc,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
             }

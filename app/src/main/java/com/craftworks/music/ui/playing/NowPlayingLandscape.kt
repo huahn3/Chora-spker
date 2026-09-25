@@ -190,7 +190,7 @@ fun NowPlayingLandscape(
                                     ?: ""
                             )
                             append(" · ")
-                            append(metadata?.extras?.getLong("bitrate") ?: "")
+                            append((metadata?.extras?.get("bitrate") as? Number)?.toString() ?: "")
                             append(" · ")
                             append(
                                 if (metadata?.extras?.getString("navidromeID")
@@ -213,7 +213,7 @@ fun NowPlayingLandscape(
                 }
 
                 if (metadata?.mediaType != MediaMetadata.MEDIA_TYPE_RADIO_STATION)
-                    PlaybackProgressSlider(iconTextColor, mediaController)
+                    PlaybackProgressSlider(iconTextColor, mediaController, metadata)
 
             }
             Row(

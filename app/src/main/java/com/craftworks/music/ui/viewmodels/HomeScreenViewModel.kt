@@ -60,16 +60,30 @@ class HomeScreenViewModel @Inject constructor(
     fun loadHomeScreenData() {
         viewModelScope.launch {
             _isLoading.value = true
-            coroutineScope {
-                val recentlyPlayedDeferred = async { albumRepository.getAlbums("recent", 20, 0, true) }
-                val recentDeferred = async { albumRepository.getAlbums("newest", 20, 0, true) }
-                val mostPlayedDeferred = async { albumRepository.getAlbums("frequent", 20, 0, true) }
-                val shuffledDeferred = async { albumRepository.getAlbums("random", 20, 0, true) }
+            try {
+                // Priority 1: Load Recently Played albums first so user sees playback history immediately
+                _recentlyPlayedAlbums.value = albumRepository.getAlbums("recent", 20, 0, true)
+            } catch (e: Exception) {
+                // Ignore error, continue
+            }
 
-                _recentlyPlayedAlbums.value = recentlyPlayedDeferred.await()
-                _recentAlbums.value = recentDeferred.await()
-                _mostPlayedAlbums.value = mostPlayedDeferred.await()
-                _shuffledAlbums.value = shuffledDeferred.await()
+            // Priority 2: Load the rest concurrently
+            coroutineScope {
+                launch {
+                    try {
+                        _recentAlbums.value = albumRepository.getAlbums("newest", 20, 0, true)
+                    } catch (_: Exception) {}
+                }
+                launch {
+                    try {
+                        _mostPlayedAlbums.value = albumRepository.getAlbums("frequent", 20, 0, true)
+                    } catch (_: Exception) {}
+                }
+                launch {
+                    try {
+                        _shuffledAlbums.value = albumRepository.getAlbums("random", 20, 0, true)
+                    } catch (_: Exception) {}
+                }
             }
             _isLoading.value = false
         }

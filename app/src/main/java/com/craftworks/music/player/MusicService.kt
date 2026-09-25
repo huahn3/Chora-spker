@@ -252,7 +252,15 @@ class ChoraMediaLibraryService : MediaLibraryService() {
                     if (uri.path?.contains("stream") == true) {
                         val server = NavidromeManager.getCurrentServer()
                         if (server != null) {
-                            val activeUrl = server.activeBaseUrl ?: server.url
+                            val activeUrl = if (!server.activeBaseUrl.isNullOrBlank()) {
+                                server.activeBaseUrl!!
+                            } else {
+                                kotlinx.coroutines.runBlocking {
+                                    kotlinx.coroutines.withTimeoutOrNull(2500) {
+                                        NavidromeManager.resolveActiveServerUrl(server, forceRefresh = false)
+                                    } ?: (server.activeBaseUrl ?: server.url)
+                                }
+                            }
                             try {
                                 val activeUri = Uri.parse(activeUrl)
                                 if (!activeUri.host.isNullOrBlank() && (uri.host != activeUri.host || uri.port != activeUri.port || uri.scheme != activeUri.scheme)) {
@@ -265,6 +273,17 @@ class ChoraMediaLibraryService : MediaLibraryService() {
                                 Log.w("MusicService", "Error resolving active stream URI: ${e.message}")
                             }
                         }
+
+                        // Clean up any duplicate leading slashes in path (e.g. "//rest/stream.view")
+                        val rawPath = uri.path
+                        if (rawPath != null && rawPath.startsWith("//")) {
+                            uri = uri.buildUpon()
+                                .path(rawPath.replaceFirst(Regex("^/+"), "/"))
+                                .build()
+                        }
+
+                        // Follow any HTTP 301/302 redirects (e.g. Cloudflare redirection to real backend port/host)
+                        uri = followHttpRedirects(uri)
 
                         val bitrate = runBlocking { transcodeManager.currentBitrateFlow.first() }
                         if (bitrate == "No Transcoding")
@@ -333,6 +352,13 @@ class ChoraMediaLibraryService : MediaLibraryService() {
                 }
 
                 saveState(sync = false)
+            }
+
+            override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                super.onPlayWhenReadyChanged(playWhenReady, reason)
+                if (playWhenReady && player.playbackState == Player.STATE_IDLE && player.mediaItemCount > 0) {
+                    player.prepare()
+                }
             }
 
             override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -407,6 +433,15 @@ class ChoraMediaLibraryService : MediaLibraryService() {
                 error.printStackTrace()
                 Log.e("PLAYER", error.stackTraceToString())
 
+                if (error.errorCode == PlaybackException.ERROR_CODE_IO_READ_POSITION_OUT_OF_RANGE) {
+                    Log.w("PLAYER", "Read position out of range. Recovering by seeking to 0ms...")
+                    serviceMainScope.launch {
+                        player.seekTo(player.currentMediaItemIndex, 0L)
+                        player.prepare()
+                    }
+                    return
+                }
+
                 val currentServer = NavidromeManager.getCurrentServer()
                 if (currentServer != null && error.errorCode in listOf(
                     PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED,
@@ -420,11 +455,34 @@ class ChoraMediaLibraryService : MediaLibraryService() {
                     }
                 }
 
-                Toast.makeText(
-                    this@ChoraMediaLibraryService,
-                    PlaybackException.getErrorCodeName(error.errorCode),
-                    Toast.LENGTH_SHORT
-                ).show()
+                val currentItem = player.currentMediaItem
+                val userMessage = when (error.errorCode) {
+                    PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED -> {
+                        Log.e("PLAYER", "ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED for item: ${currentItem?.mediaId}, uri=${currentItem?.localConfiguration?.uri}")
+                        // 自动跳过不支持格式的曲目
+                        serviceMainScope.launch {
+                            if (player.hasNextMediaItem()) {
+                                player.seekToNextMediaItem()
+                                player.prepare()
+                                player.play()
+                            }
+                        }
+                        "音频解析失败：格式不支持，已自动跳过"
+                    }
+                    PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS -> "网络连接失败：服务器返回异常状态码"
+                    PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED,
+                    PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT -> "网络连接超时或不可达"
+                    PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND -> "本地音频文件未找到"
+                    else -> PlaybackException.getErrorCodeName(error.errorCode)
+                }
+
+                serviceMainScope.launch {
+                    Toast.makeText(
+                        this@ChoraMediaLibraryService,
+                        userMessage,
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
             }
         })
 
@@ -447,44 +505,14 @@ class ChoraMediaLibraryService : MediaLibraryService() {
         // Auto-restore playback state on startup so app isn't blank
         serviceIOScope.launch {
             try {
-                val resumption = LocalDataSettingsManager(applicationContext)
-                    .playbackResumptionPlaylistWithStartPosition.firstOrNull()
-
-                if (resumption != null && resumption.mediaItems.isNotEmpty()) {
-                    val currentServer = NavidromeManager.getCurrentServer()
-                    val baseUrl = if (currentServer != null) NavidromeManager.resolveActiveServerUrl(currentServer) else null
-
-                    val restoredItems = resumption.mediaItems.map { item ->
-                        val songId = item.mediaMetadata.extras?.getString("navidromeID")
-                        if (currentServer != null && baseUrl != null && !songId.isNullOrBlank() && !songId.startsWith("Local")) {
-                            val salt = NavidromeDataSource.generateSalt(8)
-                            val token = NavidromeDataSource.md5Hash(currentServer.password + salt)
-                            val streamUrl = "$baseUrl/rest/stream.view?&id=$songId&u=${currentServer.username}&t=$token&s=$salt&v=1.12.0&c=Chora"
-                            val coverUrl = "$baseUrl/rest/getCoverArt.view?&id=$songId&u=${currentServer.username}&t=$token&s=$salt&v=1.16.1&c=Chora&size=128"
-
-                            val updatedMetadata = item.mediaMetadata.buildUpon()
-                                .setArtworkUri(coverUrl.toUri())
-                                .build()
-
-                            item.buildUpon()
-                                .setUri(streamUrl.toUri())
-                                .setMediaId(streamUrl)
-                                .setMediaMetadata(updatedMetadata)
-                                .build()
-                        } else {
-                            item
-                        }
-                    }
-
+                val data = getRefreshedResumptionData()
+                if (data != null && data.mediaItems.isNotEmpty()) {
                     withContext(Dispatchers.Main) {
                         if (player.mediaItemCount == 0) {
-                            val targetIndex = resumption.startIndex.coerceIn(0, restoredItems.size - 1)
-                            val targetPos = resumption.startPositionMs.coerceAtLeast(0L)
-                            player.setMediaItems(restoredItems)
-                            player.seekTo(targetIndex, targetPos)
-                            player.prepare()
+                            player.setMediaItems(data.mediaItems)
+                            player.seekTo(data.startIndex, data.startPositionMs)
                             player.playWhenReady = false
-                            Log.d("RESUMPTION", "Auto-restored ${restoredItems.size} items at index $targetIndex, pos $targetPos")
+                            Log.d("RESUMPTION", "Auto-restored ${data.mediaItems.size} items at index ${data.startIndex}, pos ${data.startPositionMs} (lazy prepare)")
                             MusicWidgetManager.updateWidgets(this@ChoraMediaLibraryService)
                         }
                     }
@@ -831,17 +859,22 @@ class ChoraMediaLibraryService : MediaLibraryService() {
             }
             serviceMainScope.launch {
                 Log.d("RESUMPTION", "Getting onPlaybackResumption")
-                val playbackResumptionList = LocalDataSettingsManager(applicationContext)
-                    .playbackResumptionPlaylistWithStartPosition.firstOrNull()
-                if (playbackResumptionList != null && playbackResumptionList.mediaItems.isNotEmpty()) {
-                    settable.set(playbackResumptionList)
-                    withContext(Dispatchers.Main) {
-                        player.setMediaItems(playbackResumptionList.mediaItems)
-                        player.prepare()
-                        player.playWhenReady = true
-                        player.seekTo(playbackResumptionList.startIndex, playbackResumptionList.startPositionMs)
+                try {
+                    val data = withContext(Dispatchers.IO) {
+                        getRefreshedResumptionData()
                     }
-                } else {
+                    if (data != null && data.mediaItems.isNotEmpty()) {
+                        settable.set(data)
+                        if (player.mediaItemCount == 0) {
+                            player.setMediaItems(data.mediaItems)
+                            player.seekTo(data.startIndex, data.startPositionMs)
+                            player.playWhenReady = false
+                        }
+                    } else {
+                        settable.set(MediaItemsWithStartPosition(emptyList(), 0, 0L))
+                    }
+                } catch (e: Exception) {
+                    Log.e("RESUMPTION", "Error in onPlaybackResumption", e)
                     settable.set(MediaItemsWithStartPosition(emptyList(), 0, 0L))
                 }
             }
@@ -1009,7 +1042,15 @@ class ChoraMediaLibraryService : MediaLibraryService() {
         val count = player.mediaItemCount
         if (count == 0) return
         val currentIndex = player.currentMediaItemIndex
-        val currentPosition = player.currentPosition
+        val duration = player.duration
+        val rawPosition = player.currentPosition
+        val currentPosition = if (player.playbackState == Player.STATE_ENDED ||
+            (duration > 0 && rawPosition >= duration - 1500)
+        ) {
+            0L
+        } else {
+            rawPosition.coerceAtLeast(0L)
+        }
         val items = List(count) { i -> player.getMediaItemAt(i) }
 
         val action = suspend {
@@ -1186,4 +1227,111 @@ class ChoraMediaLibraryService : MediaLibraryService() {
         return aFolderSongs
     }
     //endregion
+
+    private suspend fun getRefreshedResumptionData(): MediaSession.MediaItemsWithStartPosition? {
+        val resumption = LocalDataSettingsManager(applicationContext)
+            .playbackResumptionPlaylistWithStartPosition.firstOrNull() ?: return null
+        if (resumption.mediaItems.isEmpty()) return null
+
+        val currentServer = NavidromeManager.getCurrentServer()
+        val baseUrl = if (currentServer != null) {
+            if (!currentServer.activeBaseUrl.isNullOrBlank()) {
+                currentServer.activeBaseUrl!!.trimEnd('/')
+            } else {
+                NavidromeManager.resolveActiveServerUrl(currentServer, forceRefresh = false).trimEnd('/')
+            }
+        } else null
+
+        val restoredItems = resumption.mediaItems.map { item ->
+            val songId = item.mediaMetadata.extras?.getString("navidromeID")
+            if (currentServer != null && baseUrl != null && !songId.isNullOrBlank() && !songId.startsWith("Local")) {
+                val salt = NavidromeDataSource.generateSalt(8)
+                val token = NavidromeDataSource.md5Hash(currentServer.password + salt)
+                val streamUrl = "$baseUrl/rest/stream.view?&id=$songId&u=${currentServer.username}&t=$token&s=$salt&v=1.12.0&c=Chora"
+                val coverUrl = "$baseUrl/rest/getCoverArt.view?&id=$songId&u=${currentServer.username}&t=$token&s=$salt&v=1.16.1&c=Chora&size=300"
+
+                val updatedMetadata = item.mediaMetadata.buildUpon()
+                    .setArtworkUri(coverUrl.toUri())
+                    .build()
+
+                item.buildUpon()
+                    .setUri(streamUrl.toUri())
+                    .setMediaId(streamUrl)
+                    .setMediaMetadata(updatedMetadata)
+                    .build()
+            } else {
+                item
+            }
+        }
+
+        val targetIndex = resumption.startIndex.coerceIn(0, restoredItems.size - 1)
+        val targetItem = restoredItems.getOrNull(targetIndex)
+        val itemDuration = targetItem?.mediaMetadata?.durationMs ?: 0L
+        val rawPos = resumption.startPositionMs
+        val targetPos = if (itemDuration > 0 && rawPos >= itemDuration - 1500) {
+            0L
+        } else {
+            rawPos.coerceAtLeast(0L)
+        }
+
+        return MediaSession.MediaItemsWithStartPosition(restoredItems, targetIndex, targetPos)
+    }
+
+    private fun followHttpRedirects(initialUri: Uri): Uri {
+        var currentUri = initialUri
+        for (hop in 0 until 5) {
+            val scheme = currentUri.scheme?.lowercase()
+            if (scheme != "http" && scheme != "https") break
+            try {
+                val conn = (java.net.URI(currentUri.toString()).toURL().openConnection() as java.net.HttpURLConnection).apply {
+                    instanceFollowRedirects = false
+                    requestMethod = "HEAD"
+                    connectTimeout = 3000
+                    readTimeout = 3000
+                    if (this is javax.net.ssl.HttpsURLConnection) {
+                        val server = NavidromeManager.getCurrentServer()
+                        if (server?.allowSelfSignedCert == true) {
+                            val trustAll = arrayOf<javax.net.ssl.TrustManager>(object : javax.net.ssl.X509TrustManager {
+                                override fun checkClientTrusted(chain: Array<java.security.cert.X509Certificate>?, authType: String?) {}
+                                override fun checkServerTrusted(chain: Array<java.security.cert.X509Certificate>?, authType: String?) {}
+                                override fun getAcceptedIssuers(): Array<java.security.cert.X509Certificate> = arrayOf()
+                            })
+                            val sc = javax.net.ssl.SSLContext.getInstance("TLS")
+                            sc.init(null, trustAll, java.security.SecureRandom())
+                            sslSocketFactory = sc.socketFactory
+                            hostnameVerifier = javax.net.ssl.HostnameVerifier { _, _ -> true }
+                        }
+                    }
+                }
+                val code = conn.responseCode
+                if (code in 301..308) {
+                    val location = conn.getHeaderField("Location")
+                    conn.disconnect()
+                    if (!location.isNullOrBlank()) {
+                        val targetUri = java.net.URI(location)
+                        val resolved = if (targetUri.isAbsolute) targetUri else java.net.URI(currentUri.toString()).resolve(targetUri)
+                        Log.d("MusicService", "followHttpRedirects hop $hop: $currentUri -> $resolved")
+                        currentUri = Uri.parse(resolved.toString())
+
+                        val portPart = if (resolved.port != -1) ":${resolved.port}" else ""
+                        val resolvedOrigin = "${resolved.scheme}://${resolved.host}$portPart".trimEnd('/')
+                        val server = NavidromeManager.getCurrentServer()
+                        if (server != null && server.activeBaseUrl != resolvedOrigin) {
+                            server.activeBaseUrl = resolvedOrigin
+                            serviceIOScope.launch {
+                                NavidromeManager.saveServers()
+                            }
+                        }
+                        continue
+                    }
+                }
+                conn.disconnect()
+                break
+            } catch (e: Exception) {
+                Log.w("MusicService", "followHttpRedirects exception: ${e.message}")
+                break
+            }
+        }
+        return currentUri
+    }
 }

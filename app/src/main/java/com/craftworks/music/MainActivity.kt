@@ -10,6 +10,7 @@ import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -58,6 +59,7 @@ import androidx.compose.runtime.Stable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -120,8 +122,13 @@ import com.craftworks.music.managers.settings.AppearanceSettingsManager
 import com.craftworks.music.player.ChoraMediaLibraryService
 import com.craftworks.music.player.rememberManagedMediaController
 import com.craftworks.music.ui.elements.dialogs.tv.OnboardingDialog
+import androidx.hilt.navigation.compose.hiltViewModel
+import com.craftworks.music.managers.settings.LocalDataSettingsManager
+import com.craftworks.music.ui.playing.NowPlayingBackground
 import com.craftworks.music.ui.playing.NowPlayingContent
 import com.craftworks.music.ui.playing.NowPlayingMiniPlayer
+import com.craftworks.music.ui.playing.NowPlayingViewModel
+import com.craftworks.music.ui.playing.PlayQueueBottomSheet
 import com.craftworks.music.ui.playing.dpToPx
 import com.craftworks.music.ui.theme.MusicPlayerTheme
 import com.gigamole.composefadingedges.FadingEdgesGravity
@@ -129,6 +136,7 @@ import com.gigamole.composefadingedges.content.FadingEdgesContentType
 import com.gigamole.composefadingedges.content.scrollconfig.FadingEdgesScrollConfig
 import com.gigamole.composefadingedges.verticalFadingEdges
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.launch
 import java.util.Locale
 
@@ -161,10 +169,39 @@ class MainActivity : ComponentActivity() {
             MusicPlayerTheme (darkTheme) {
                 navController = rememberNavController()
 
+                val nowPlayingViewModel: NowPlayingViewModel = hiltViewModel()
+                val playQueueOpen by nowPlayingViewModel.playQueueOpen.collectAsStateWithLifecycle()
+                val colors by nowPlayingViewModel.paletteColors.collectAsStateWithLifecycle()
+
                 val mediaController by rememberManagedMediaController()
                 var metadata by remember { mutableStateOf<MediaMetadata?>(null) }
 
                 val coroutineScope = rememberCoroutineScope()
+
+                // Fast-load playback resumption metadata immediately on startup so mini player appears instantly
+                LaunchedEffect(Unit) {
+                    if (metadata == null) {
+                        try {
+                            val resumption = LocalDataSettingsManager(applicationContext)
+                                .playbackResumptionPlaylistWithStartPosition.firstOrNull()
+                            if (metadata == null && resumption != null && resumption.mediaItems.isNotEmpty()) {
+                                val idx = resumption.startIndex.coerceIn(0, resumption.mediaItems.size - 1)
+                                metadata = resumption.mediaItems[idx].mediaMetadata
+                            }
+                        } catch (e: Exception) {
+                            Log.w("RESUMPTION", "Could not fast-load playback resumption: ${e.message}")
+                        }
+                    }
+                }
+
+                // Update palette colors for queue and player background
+                LaunchedEffect(metadata?.artworkUri) {
+                    nowPlayingViewModel.updatePaletteFromUri(
+                        metadata?.artworkUri,
+                        NowPlayingBackground.STATIC_BLUR,
+                        darkTheme
+                    )
+                }
 
                 // Update metadata from mediaController.
                 DisposableEffect(mediaController) {
@@ -185,7 +222,9 @@ class MainActivity : ComponentActivity() {
                         }
                     }
 
-                    metadata = mediaController?.mediaMetadata
+                    if (mediaController?.mediaMetadata != null) {
+                        metadata = mediaController?.mediaMetadata
+                    }
                     mediaController?.addListener(listener)
 
                     onDispose {
@@ -194,8 +233,8 @@ class MainActivity : ComponentActivity() {
                 }
 
 
-                val positionalThreshold = dpToPx(56).toFloat()
-                val velocityThreshold = dpToPx(125).toFloat()
+                val positionalThreshold = dpToPx(48).toFloat()
+                val velocityThreshold = dpToPx(100).toFloat()
 
                 val scaffoldState = remember {
                     BottomSheetScaffoldState(
@@ -203,8 +242,8 @@ class MainActivity : ComponentActivity() {
                             skipPartiallyExpanded = false,
                             initialValue = SheetValue.PartiallyExpanded,
                             skipHiddenState = true,
-                            velocityThreshold = { positionalThreshold },
-                            positionalThreshold = { velocityThreshold }
+                            velocityThreshold = { velocityThreshold },
+                            positionalThreshold = { positionalThreshold }
                         ), snackbarHostState = SnackbarHostState()
                     )
                 }
@@ -230,13 +269,35 @@ class MainActivity : ComponentActivity() {
                     // Set background color to colorScheme.background
                     window.decorView.setBackgroundColor(MaterialTheme.colorScheme.background.toArgb())
 
-                    var lastBackPressTime = 0L
-                    val exitBackCallback = object : OnBackPressedCallback(true) {
-                        override fun handleOnBackPressed() {
-                            if (navController.previousBackStackEntry != null) {
-                                navController.popBackStack()
-                                return
-                            }
+                    val isPlayerExpanded by remember {
+                        derivedStateOf {
+                            scaffoldState.bottomSheetState.currentValue == SheetValue.Expanded ||
+                            scaffoldState.bottomSheetState.targetValue == SheetValue.Expanded
+                        }
+                    }
+
+                    // 1. 播放界面展开时（封面、歌词、播放队列、歌曲详情），返回键拦截并缩小为 Mini Player
+                    BackHandler(enabled = isPlayerExpanded) {
+                        if (nowPlayingViewModel.playQueueOpen.value) {
+                            nowPlayingViewModel.setPlayQueueOpen(false)
+                            return@BackHandler
+                        }
+                        if (nowPlayingViewModel.detailsOpen.value) {
+                            nowPlayingViewModel.setDetailsOpen(false)
+                            return@BackHandler
+                        }
+                        coroutineScope.launch {
+                            scaffoldState.bottomSheetState.partialExpand()
+                        }
+                    }
+
+                    // 2. Mini Player 收起状态下的返回逻辑（检测首页双击退出，其他界面正常回退）
+                    var lastBackPressTime by remember { mutableLongStateOf(0L) }
+                    BackHandler(enabled = !isPlayerExpanded) {
+                        val currentRoute = navController.currentBackStackEntry?.destination?.route
+                        val isAtHome = currentRoute == Screen.Home.route
+
+                        if (isAtHome) {
                             val currentTime = System.currentTimeMillis()
                             if (currentTime - lastBackPressTime < 2000) {
                                 val service = ChoraMediaLibraryService.getInstance()
@@ -256,19 +317,18 @@ class MainActivity : ComponentActivity() {
                                     android.widget.Toast.LENGTH_SHORT
                                 ).show()
                             }
+                            return@BackHandler
                         }
-                    }
-                    onBackPressedDispatcher.addCallback(this, exitBackCallback)
 
-                    val backCallback = object : OnBackPressedCallback(false) {
-                        override fun handleOnBackPressed() {
-                            coroutineScope.launch {
-                                scaffoldState.bottomSheetState.partialExpand()
+                        if (navController.previousBackStackEntry != null) {
+                            navController.popBackStack()
+                        } else {
+                            navController.navigate(Screen.Home.route) {
+                                popUpTo(Screen.Home.route) { inclusive = true }
+                                launchSingleTop = true
                             }
                         }
                     }
-
-                    onBackPressedDispatcher.addCallback(this, backCallback)
 
                     Scaffold(
                         bottomBar = {
@@ -306,7 +366,9 @@ class MainActivity : ComponentActivity() {
                                         ) {
                                             NowPlayingContent(
                                                 mediaController = mediaController,
-                                                metadata = metadata
+                                                metadata = metadata,
+                                                viewModel = nowPlayingViewModel,
+                                                showInternalQueue = false
                                             )
                                         }
 
@@ -317,7 +379,11 @@ class MainActivity : ComponentActivity() {
                                                 coroutineScope.launch {
                                                     scaffoldState.bottomSheetState.expand()
                                                 }
-                                            })
+                                            },
+                                            onQueueClick = {
+                                                nowPlayingViewModel.setPlayQueueOpen(true)
+                                            }
+                                        )
                                     }
 
                                     val currentView = LocalView.current
@@ -326,8 +392,6 @@ class MainActivity : ComponentActivity() {
                                         if (scaffoldState.bottomSheetState.targetValue == SheetValue.Expanded) {
                                             if (disableScreenStandy)
                                                 currentView.keepScreenOn = true
-
-                                            backCallback.isEnabled  = true
 
                                             /* Restore nav bars.
                                             @Suppress("DEPRECATION")
@@ -343,7 +407,6 @@ class MainActivity : ComponentActivity() {
                                             Log.d("NOW-PLAYING", "KeepScreenOn: True")
                                         } else {
                                             currentView.keepScreenOn = false
-                                            backCallback.isEnabled = false
 
                                             /* Restore nav bars.
                                             @Suppress("DEPRECATION")
@@ -354,7 +417,6 @@ class MainActivity : ComponentActivity() {
 
                                         onDispose {
                                             currentView.keepScreenOn = false
-                                            backCallback.isEnabled = false
                                             Log.d("NOW-PLAYING", "KeepScreenOn: False")
                                         }
                                     }
@@ -374,6 +436,13 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                 }
+
+                PlayQueueBottomSheet(
+                    isOpen = playQueueOpen,
+                    onDismissRequest = { nowPlayingViewModel.setPlayQueueOpen(false) },
+                    mediaController = mediaController,
+                    colors = colors
+                )
 
                 var showNoProvidersDialog by rememberSaveable { mutableStateOf(false) }
 
@@ -756,7 +825,11 @@ fun AnimatedBottomNavBar(
                     onClick = {
                         if (item.screenRoute == backStackEntry?.destination?.route) return@NavigationBarItem
                         navController.navigate(item.screenRoute) {
+                            popUpTo(Screen.Home.route) {
+                                saveState = true
+                            }
                             launchSingleTop = true
+                            restoreState = true
                         }
                         coroutineScope.launch {
                             if (scaffoldState.bottomSheetState.currentValue == SheetValue.Expanded) scaffoldState.bottomSheetState.partialExpand()
@@ -774,7 +847,11 @@ fun AnimatedBottomNavBar(
                     onClick = {
                         if (Screen.NowPlayingLandscape.route == backStackEntry?.destination?.route) return@NavigationBarItem
                         navController.navigate(Screen.NowPlayingLandscape.route) {
+                            popUpTo(Screen.Home.route) {
+                                saveState = true
+                            }
                             launchSingleTop = true
+                            restoreState = true
                         }
                         coroutineScope.launch {
                             if (scaffoldState.bottomSheetState.currentValue == SheetValue.Expanded) scaffoldState.bottomSheetState.partialExpand()
@@ -820,7 +897,11 @@ fun AnimatedBottomNavBar(
                         onClick = {
                             if (item.screenRoute == backStackEntry?.destination?.route) return@NavigationRailItem
                             navController.navigate(item.screenRoute) {
+                                popUpTo(Screen.Home.route) {
+                                    saveState = true
+                                }
                                 launchSingleTop = true
+                                restoreState = true
                             }
                             coroutineScope.launch {
                                 if (scaffoldState.bottomSheetState.currentValue == SheetValue.Expanded) scaffoldState.bottomSheetState.partialExpand()
@@ -839,7 +920,11 @@ fun AnimatedBottomNavBar(
                         onClick = {
                             if (Screen.NowPlayingLandscape.route == backStackEntry?.destination?.route) return@NavigationRailItem
                             navController.navigate(Screen.NowPlayingLandscape.route) {
+                                popUpTo(Screen.Home.route) {
+                                    saveState = true
+                                }
                                 launchSingleTop = true
+                                restoreState = true
                             }
                             coroutineScope.launch {
                                 if (scaffoldState.bottomSheetState.currentValue == SheetValue.Expanded) scaffoldState.bottomSheetState.partialExpand()

@@ -63,15 +63,19 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
+import androidx.media3.common.Timeline
 import androidx.media3.common.util.UnstableApi
 import coil.compose.SubcomposeAsyncImage
 import coil.request.ImageRequest
 import com.craftworks.music.R
 import com.craftworks.music.data.repository.LyricsState
+import com.craftworks.music.managers.settings.LocalDataSettingsManager
 import com.craftworks.music.player.ChoraMediaLibraryService
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.isActive
 
 @androidx.annotation.OptIn(UnstableApi::class)
@@ -82,7 +86,8 @@ import kotlinx.coroutines.isActive
 fun NowPlayingMiniPlayer(
     scaffoldState: BottomSheetScaffoldState = rememberBottomSheetScaffoldState(),
     metadata: MediaMetadata? = null,
-    onClick: () -> Unit = { }
+    onClick: () -> Unit = { },
+    onQueueClick: () -> Unit = { }
 ) {
     val expanded by remember { derivedStateOf { scaffoldState.bottomSheetState.targetValue == SheetValue.Expanded } }
 
@@ -100,15 +105,39 @@ fun NowPlayingMiniPlayer(
     val service = ChoraMediaLibraryService.getInstance()
     val player = service?.player
 
+    val metaDurationMs = remember(metadata) {
+        val ms = metadata?.durationMs ?: 0L
+        if (ms > 0L) ms
+        else (metadata?.extras?.getLong("duration")?.takeIf { it > 0 }?.times(1000L)) ?: 0L
+    }
+
     var isPlaying by remember { mutableStateOf(player?.isPlaying == true) }
-    var currentPosition by remember { mutableLongStateOf(player?.currentPosition ?: 0L) }
-    var duration by remember { mutableLongStateOf(player?.duration?.coerceAtLeast(1L) ?: 1L) }
+    var currentPosition by remember { mutableLongStateOf(player?.currentPosition?.takeIf { it > 0 } ?: 0L) }
+    var duration by remember(player?.duration, metaDurationMs) {
+        mutableLongStateOf(
+            if ((player?.duration ?: 0L) > 1000L) player!!.duration
+            else if (metaDurationMs > 1000L) metaDurationMs
+            else 0L
+        )
+    }
 
     var showControls by remember { mutableStateOf(true) }
     var lastActionTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
 
+    val context = LocalContext.current
+    // Fast-load saved position if player hasn't sought yet on cold start
+    LaunchedEffect(player, metadata) {
+        if (currentPosition == 0L) {
+            val resumption = LocalDataSettingsManager(context)
+                .playbackResumptionPlaylistWithStartPosition.firstOrNull()
+            if (resumption != null && resumption.startPositionMs > 0L && currentPosition == 0L) {
+                currentPosition = resumption.startPositionMs
+            }
+        }
+    }
+
     // Synchronize player state and events
-    DisposableEffect(player) {
+    DisposableEffect(player, metaDurationMs) {
         if (player == null) return@DisposableEffect onDispose { }
         val listener = object : Player.Listener {
             override fun onIsPlayingChanged(playing: Boolean) {
@@ -116,7 +145,32 @@ fun NowPlayingMiniPlayer(
                 lastActionTime = System.currentTimeMillis()
             }
             override fun onPlaybackStateChanged(state: Int) {
-                duration = player.duration.coerceAtLeast(1L)
+                val pDuration = player.duration
+                if (pDuration > 1000L) {
+                    duration = pDuration
+                } else if (metaDurationMs > 1000L) {
+                    duration = metaDurationMs
+                }
+            }
+            override fun onTimelineChanged(timeline: Timeline, reason: Int) {
+                val pDuration = player.duration
+                if (pDuration > 1000L) {
+                    duration = pDuration
+                } else if (metaDurationMs > 1000L) {
+                    duration = metaDurationMs
+                }
+            }
+            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                val pDuration = player.duration
+                val itemMs = mediaItem?.mediaMetadata?.durationMs ?: 0L
+                if (pDuration > 1000L) {
+                    duration = pDuration
+                } else if (itemMs > 1000L) {
+                    duration = itemMs
+                } else if (metaDurationMs > 1000L) {
+                    duration = metaDurationMs
+                }
+                currentPosition = player.currentPosition.takeIf { it >= 0L } ?: 0L
             }
             override fun onPositionDiscontinuity(
                 oldPosition: Player.PositionInfo,
@@ -129,8 +183,15 @@ fun NowPlayingMiniPlayer(
         }
         player.addListener(listener)
         isPlaying = player.isPlaying
-        currentPosition = player.currentPosition
-        duration = player.duration.coerceAtLeast(1L)
+        if (player.currentPosition > 0L) {
+            currentPosition = player.currentPosition
+        }
+        val pDuration = player.duration
+        if (pDuration > 1000L) {
+            duration = pDuration
+        } else if (metaDurationMs > 1000L) {
+            duration = metaDurationMs
+        }
         onDispose {
             player.removeListener(listener)
         }
@@ -201,7 +262,16 @@ fun NowPlayingMiniPlayer(
                     }
             ) {
                 // Circular progress ring tracking playback
-                val progress = (currentPosition.toFloat() / duration.toFloat()).coerceIn(0f, 1f)
+                val effectiveDuration = when {
+                    duration > 1000L -> duration
+                    metaDurationMs > 1000L -> metaDurationMs
+                    else -> 0L
+                }
+                val progress = if (effectiveDuration > 0L) {
+                    (currentPosition.toFloat() / effectiveDuration.toFloat()).coerceIn(0f, 1f)
+                } else {
+                    0f
+                }
                 CircularProgressIndicator(
                     progress = { progress },
                     modifier = Modifier.size(48.dp),
@@ -340,7 +410,7 @@ fun NowPlayingMiniPlayer(
 
             // Right side: Queue / Playlist button (matching design)
             IconButton(
-                onClick = onClick,
+                onClick = onQueueClick,
                 enabled = !expanded,
                 modifier = Modifier.size(40.dp)
             ) {

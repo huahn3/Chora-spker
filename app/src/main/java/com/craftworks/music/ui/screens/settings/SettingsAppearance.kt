@@ -90,6 +90,7 @@ fun S_AppearanceScreen(navHostController: NavHostController = rememberNavControl
     var showHomeItemsDialog by remember { mutableStateOf(false) }
     var showNowPlayingTitleAlignmentDialog by remember { mutableStateOf(false) }
     var showNowPlayingLyricsAlignmentDialog by remember { mutableStateOf(false) }
+    var showPageTransitionDialog by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
@@ -272,12 +273,20 @@ fun S_AppearanceScreen(navHostController: NavHostController = rememberNavControl
                     //Navbar Items
                     val navBarItemsEnabled =
                         LocalConfiguration.current.uiMode and Configuration.UI_MODE_TYPE_MASK != Configuration.UI_MODE_TYPE_TELEVISION
+                    val navItemTitleMap = remember {
+                        mapOf(
+                            "Home" to "首页",
+                            "Albums" to "专辑",
+                            "Songs" to "歌曲",
+                            "Playlists" to "播放列表"
+                        )
+                    }
                     val enabledNavbarItems =
                         AppearanceSettingsManager(context).bottomNavItemsFlow.collectAsState(
                             emptyList()
                         ).value
                             .filter { it.enabled }
-                            .joinToString(", ") { it.title }
+                            .joinToString(", ") { navItemTitleMap[it.title] ?: it.title }
                     SettingsDialogButton(
                         stringResource(R.string.Setting_Navbar_Items),
                         enabledNavbarItems,
@@ -306,7 +315,7 @@ fun S_AppearanceScreen(navHostController: NavHostController = rememberNavControl
                                 context.getString(
                                     titleMap[it.key]
                                         ?: androidx.media3.session.R.string.error_message_fallback
-                                )
+                                 )
                             }
 
                     SettingsDialogButton(
@@ -335,15 +344,23 @@ fun S_AppearanceScreen(navHostController: NavHostController = rememberNavControl
                     modifier = Modifier.clip(RoundedCornerShape(16.dp)),
                     verticalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
+
+                    // Page Transition Animation Option
+                    val pageTransitionStyle by AppearanceSettingsManager(context).pageTransitionStyleFlow.collectAsState(
+                        com.craftworks.music.managers.settings.PageTransitionStyle.ELEGANT_SPRING
+                    )
+                    val transitionStyleLabels = mapOf(
+                        com.craftworks.music.managers.settings.PageTransitionStyle.ELEGANT_SPRING to "优雅平滑 (无回弹)",
+                        com.craftworks.music.managers.settings.PageTransitionStyle.CUBIC_BEZIER to "经典缓动",
+                        com.craftworks.music.managers.settings.PageTransitionStyle.SNAPPY to "干脆利落",
+                        com.craftworks.music.managers.settings.PageTransitionStyle.GENTLE to "柔和渐进"
+                    )
                     SettingsDialogButton(
-                        stringResource(R.string.Setting_NowPlayingLyricsAlignment),
-                        stringResource(
-                            alignmentLabels[nowPlayingLyricsAlignment]
-                                ?: R.string.NowPlayingTitleAlignment_Center
-                        ),
-                        ImageVector.vectorResource(R.drawable.rounded_sort_24),
+                        "播放界面滑动动画",
+                        transitionStyleLabels[pageTransitionStyle] ?: "优雅平滑 (无回弹)",
+                        ImageVector.vectorResource(R.drawable.rounded_repeat_24),
                         toggleEvent = {
-                            showNowPlayingLyricsAlignmentDialog = true
+                            showPageTransitionDialog = true
                         }
                     )
                     //Lyrics blur Info
@@ -563,14 +580,16 @@ fun S_AppearanceScreen(navHostController: NavHostController = rememberNavControl
                     }
                 }
             )
-        if(showNowPlayingLyricsAlignmentDialog)
-            NowPlayingTitleAlignmentDialog(
-                setShowDialog = { showNowPlayingLyricsAlignmentDialog = it },
-                title = stringResource(R.string.Setting_NowPlayingLyricsAlignment),
-                selection = nowPlayingLyricsAlignment,
-                onSet = {
-                    runBlocking {
-                        AppearanceSettingsManager(context).setNowPlayingLyricsAlignment(it)
+
+        if(showPageTransitionDialog)
+            com.craftworks.music.ui.elements.dialogs.PageTransitionStyleDialog(
+                setShowDialog = { showPageTransitionDialog = it },
+                selection = AppearanceSettingsManager(context).pageTransitionStyleFlow.collectAsState(
+                    com.craftworks.music.managers.settings.PageTransitionStyle.ELEGANT_SPRING
+                ).value,
+                onSet = { style ->
+                    coroutineScope.launch {
+                        AppearanceSettingsManager(context).setPageTransitionStyle(style)
                     }
                 }
             )

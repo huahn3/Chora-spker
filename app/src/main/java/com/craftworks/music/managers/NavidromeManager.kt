@@ -101,9 +101,12 @@ object NavidromeManager {
                     val targetUri = URI(location)
                     val resolvedUri = if (targetUri.isAbsolute) targetUri else urlObj.toURI().resolve(targetUri)
                     val portPart = if (resolvedUri.port != -1) ":${resolvedUri.port}" else ""
-                    val resolvedOrigin = "${resolvedUri.scheme}://${resolvedUri.host}$portPart"
+                    val resolvedOrigin = "${resolvedUri.scheme}://${resolvedUri.host}$portPart".trimEnd('/')
                     Log.d("NAVIDROME", "Resolved dynamic redirect URL: $resolvedOrigin (entry was ${server.url})")
                     server.activeBaseUrl = resolvedOrigin
+                    withContext(Dispatchers.Main) {
+                        saveServers()
+                    }
                     conn.disconnect()
                     return@withContext resolvedOrigin
                 }
@@ -113,16 +116,16 @@ object NavidromeManager {
             Log.w("NAVIDROME", "Could not probe redirect for ${server.url}: ${e.message}")
         }
 
-        server.activeBaseUrl = server.url
-        return@withContext server.url
+        server.activeBaseUrl = server.url.trimEnd('/')
+        return@withContext server.activeBaseUrl!!
     }
 
     suspend fun addServer(server: NavidromeProvider, isPing: Boolean = false) {
         Log.d("NAVIDROME", "Added server $server")
         server.url = if (!server.url.trim().startsWith("http"))
-            "http://" + server.url.trim()
+            "http://" + server.url.trim().trimEnd('/')
         else
-            server.url.trim()
+            server.url.trim().trimEnd('/')
 
         resolveActiveServerUrl(server, forceRefresh = true)
 
@@ -220,7 +223,7 @@ object NavidromeManager {
         setSyncingStatus(false)
     }
 
-    private fun saveServers() {
+    fun saveServers() {
         DataRefreshManager.notifyDataSourcesChanged()
         val serversJson = json.encodeToString(servers as Map<String, NavidromeProvider>)
         sharedPreferences.edit { putString(PREF_SERVERS, serversJson) }

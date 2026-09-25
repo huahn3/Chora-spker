@@ -1,14 +1,19 @@
 package com.craftworks.music.ui.playing
 
+import android.content.res.Configuration
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -16,14 +21,17 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.PlayArrow
-import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -35,12 +43,18 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.vectorResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.graphics.ColorUtils
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.common.Timeline
@@ -51,8 +65,73 @@ import sh.calvin.reorderable.rememberReorderableLazyListState
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
+fun PlayQueueBottomSheet(
+    isOpen: Boolean,
+    onDismissRequest: () -> Unit,
+    mediaController: MediaController?,
+    colors: List<Color> = emptyList()
+) {
+    if (!isOpen) return
+
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val sheetHeightFraction = if (isLandscape) 0.85f else 0.44f
+
+    val dominantColor = remember(colors) {
+        colors.getOrNull(2) ?: colors.getOrNull(1) ?: colors.firstOrNull() ?: Color(0xFF1E242B)
+    }
+
+    val backgroundBrush = remember(dominantColor) {
+        val topColor = ColorUtils.blendARGB(dominantColor.toArgb(), Color(0xFF161B22).toArgb(), 0.65f).let { Color(it) }.copy(alpha = 0.96f)
+        val bottomColor = ColorUtils.blendARGB(dominantColor.toArgb(), Color(0xFF0D1117).toArgb(), 0.85f).let { Color(it) }.copy(alpha = 0.98f)
+        Brush.verticalGradient(listOf(topColor, bottomColor))
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismissRequest,
+        sheetState = sheetState,
+        containerColor = Color.Transparent,
+        dragHandle = null,
+        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .fillMaxHeight(sheetHeightFraction)
+                .background(
+                    brush = backgroundBrush,
+                    shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
+                )
+        ) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                // Drag handle
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 10.dp, bottom = 6.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(width = 36.dp, height = 4.dp)
+                            .background(Color.White.copy(alpha = 0.35f), CircleShape)
+                    )
+                }
+                PlayQueueContent(
+                    mediaController = mediaController,
+                    paletteColors = colors,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
 fun PlayQueueContent(
     mediaController: MediaController?,
+    paletteColors: List<Color> = emptyList(),
     modifier: Modifier = Modifier
 ) {
     if (mediaController == null)
@@ -95,9 +174,12 @@ fun PlayQueueContent(
 
     val lazyListState = rememberLazyListState()
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(currentMediaItem) {
         if (currentMediaItem in currentList) {
-            lazyListState.scrollToItem(currentList.indexOf(currentMediaItem))
+            val targetIdx = currentList.indexOf(currentMediaItem)
+            if (targetIdx >= 0) {
+                lazyListState.scrollToItem(targetIdx)
+            }
         }
     }
 
@@ -107,11 +189,15 @@ fun PlayQueueContent(
         dragCurrentIndex = to.index
     }
 
+    val accentColor = remember(paletteColors) {
+        paletteColors.firstOrNull() ?: Color(0xFF7FA8DE)
+    }
+
     LazyColumn(
         state = lazyListState,
         modifier = modifier.fillMaxSize(),
-        contentPadding = PaddingValues(12.dp),
-        verticalArrangement = Arrangement.spacedBy(2.dp)
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
         itemsIndexed(currentList, key = { _, item -> item.mediaId }) { index, item ->
             ReorderableItem(
@@ -131,17 +217,20 @@ fun PlayQueueContent(
                     tonalElevation = elevation,
                     shadowElevation = elevation,
                     color = when {
-                        draggingThis -> MaterialTheme.colorScheme.surfaceContainerHighest
-                        isCurrentItem -> MaterialTheme.colorScheme.secondaryContainer
-                        else -> BottomSheetDefaults.ContainerColor
+                        draggingThis -> Color.White.copy(alpha = 0.16f)
+                        isCurrentItem -> accentColor.copy(alpha = 0.22f)
+                        else -> Color.White.copy(alpha = 0.04f)
                     },
-                    shape = MaterialTheme.shapes.small,
-                    modifier = Modifier.fillMaxWidth().clickable {
-                        mediaController.seekTo(index, 0)
-                    }
+                    shape = RoundedCornerShape(10.dp),
+                    border = if (isCurrentItem) BorderStroke(1.dp, accentColor.copy(alpha = 0.45f)) else null,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            mediaController.seekTo(index, 0)
+                        }
                 ) {
                     Row(
-                        modifier = Modifier.padding(12.dp),
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
@@ -153,14 +242,14 @@ fun PlayQueueContent(
                                 Icon(
                                     imageVector = Icons.Rounded.PlayArrow,
                                     contentDescription = "Now playing",
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(20.dp)
+                                    tint = accentColor,
+                                    modifier = Modifier.size(22.dp)
                                 )
                             } else {
                                 Text(
                                     text = "${index + 1}",
                                     style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    color = Color.White.copy(alpha = 0.45f)
                                 )
                             }
                         }
@@ -168,13 +257,13 @@ fun PlayQueueContent(
                         // Title + artist
                         Column(
                             modifier = Modifier.weight(1f),
-                            verticalArrangement = Arrangement.spacedBy(1.dp)
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
                         ) {
                             Text(
                                 text = item.mediaMetadata.title?.toString() ?: "Unknown",
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = if (isCurrentItem) MaterialTheme.colorScheme.onSecondaryContainer
-                                else MaterialTheme.colorScheme.onSurface,
+                                fontWeight = if (isCurrentItem) FontWeight.SemiBold else FontWeight.Normal,
+                                color = if (isCurrentItem) Color.White else Color.White.copy(alpha = 0.90f),
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
@@ -182,10 +271,7 @@ fun PlayQueueContent(
                                 Text(
                                     text = artist,
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = (
-                                            if (isCurrentItem) MaterialTheme.colorScheme.onSecondaryContainer
-                                            else MaterialTheme.colorScheme.onSurfaceVariant
-                                            ).copy(alpha = 0.7f),
+                                    color = if (isCurrentItem) Color.White.copy(alpha = 0.80f) else Color.White.copy(alpha = 0.55f),
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
@@ -196,7 +282,7 @@ fun PlayQueueContent(
                         Icon(
                             imageVector = ImageVector.vectorResource(R.drawable.baseline_drag_handle_24),
                             contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            tint = if (isCurrentItem) Color.White.copy(alpha = 0.65f) else Color.White.copy(alpha = 0.40f),
                             modifier = Modifier
                                 .size(24.dp)
                                 .draggableHandle(

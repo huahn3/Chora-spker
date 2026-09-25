@@ -67,10 +67,14 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
+import androidx.media3.common.Timeline
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaController
+import com.craftworks.music.managers.settings.LocalDataSettingsManager
+import kotlinx.coroutines.flow.firstOrNull
 import androidx.media3.ui.compose.state.rememberNextButtonState
 import androidx.media3.ui.compose.state.rememberPlayPauseButtonState
 import androidx.media3.ui.compose.state.rememberPreviousButtonState
@@ -94,15 +98,32 @@ fun PlaybackProgressSlider(
     mediaController: MediaController? = null,
     metadata: MediaMetadata? = null
 ) {
-    var currentValue by remember { mutableLongStateOf(0L) }
-    val currentDuration by remember(mediaController?.duration) {
-        derivedStateOf {
-            mediaController?.duration?.coerceAtLeast(0L)
-        }
+    val metaDurationMs = remember(metadata) {
+        val ms = metadata?.durationMs ?: 0L
+        if (ms > 0L) ms
+        else (metadata?.extras?.getLong("duration")?.takeIf { it > 0 }?.times(1000L)) ?: 0L
     }
 
+    var currentValue by remember { mutableLongStateOf(mediaController?.currentPosition?.takeIf { it > 0 } ?: 0L) }
+    var currentDuration by remember(mediaController, metaDurationMs) {
+        mutableLongStateOf(
+            if ((mediaController?.duration ?: 0L) > 1000L) mediaController!!.duration
+            else if (metaDurationMs > 1000L) metaDurationMs
+            else 0L
+        )
+    }
+
+    val effectiveDur = when {
+        currentDuration > 1000L -> currentDuration
+        metaDurationMs > 1000L -> metaDurationMs
+        else -> 0L
+    }
+
+    val safeMax = if (effectiveDur > 0L) effectiveDur.toFloat() else 1f
+    val safeValue = if (effectiveDur > 0L) currentValue.toFloat().coerceIn(0f, safeMax) else 0f
+
     val animatedValue by animateFloatAsState(
-        targetValue = currentValue.toFloat(),
+        targetValue = safeValue,
         animationSpec = spring(
             dampingRatio = Spring.DampingRatioLowBouncy,
             stiffness = Spring.StiffnessMedium
@@ -116,6 +137,18 @@ fun PlaybackProgressSlider(
 
     var isPlaying by remember { mutableStateOf(false) }
 
+    val context = LocalContext.current
+    // Fast-load saved position if mediaController hasn't sought yet on cold start
+    LaunchedEffect(mediaController, metadata) {
+        if (currentValue == 0L) {
+            val resumption = LocalDataSettingsManager(context)
+                .playbackResumptionPlaylistWithStartPosition.firstOrNull()
+            if (resumption != null && resumption.startPositionMs > 0L && currentValue == 0L) {
+                currentValue = resumption.startPositionMs
+            }
+        }
+    }
+
     LaunchedEffect(mediaController, isPlaying) {
         if (mediaController != null && isPlaying) {
             while (isActive && !isInteracting) {
@@ -123,21 +156,52 @@ fun PlaybackProgressSlider(
                 delay(1000L)
             }
         } else {
-            if (mediaController != null) {
+            if (mediaController != null && mediaController.currentPosition > 0L) {
                 currentValue = mediaController.currentPosition
             }
         }
     }
 
-    DisposableEffect(mediaController) {
+    DisposableEffect(mediaController, metaDurationMs) {
         if (mediaController == null) {
-            onDispose { }
+            return@DisposableEffect onDispose { }
         }
 
         val listener = object : Player.Listener {
             override fun onIsPlayingChanged(playing: Boolean) {
                 Log.d("TAG", "MediaController isPlaying changed: $playing")
                 isPlaying = playing
+            }
+
+            override fun onPlaybackStateChanged(state: Int) {
+                val dur = mediaController.duration
+                if (dur > 1000L) {
+                    currentDuration = dur
+                } else if (metaDurationMs > 1000L) {
+                    currentDuration = metaDurationMs
+                }
+            }
+
+            override fun onTimelineChanged(timeline: Timeline, reason: Int) {
+                val dur = mediaController.duration
+                if (dur > 1000L) {
+                    currentDuration = dur
+                } else if (metaDurationMs > 1000L) {
+                    currentDuration = metaDurationMs
+                }
+            }
+
+            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                val dur = mediaController.duration
+                val itemDur = mediaItem?.mediaMetadata?.durationMs ?: 0L
+                if (dur > 1000L) {
+                    currentDuration = dur
+                } else if (itemDur > 1000L) {
+                    currentDuration = itemDur
+                } else if (metaDurationMs > 1000L) {
+                    currentDuration = metaDurationMs
+                }
+                currentValue = mediaController.currentPosition.takeIf { it >= 0L } ?: 0L
             }
 
             override fun onPositionDiscontinuity(
@@ -151,14 +215,21 @@ fun PlaybackProgressSlider(
             }
         }
 
-        mediaController?.addListener(listener)
+        mediaController.addListener(listener)
 
-        // Initial check in case state changed before listener was attached or for initial setup
-        isPlaying = mediaController?.isPlaying ?: false
-        currentValue = mediaController?.currentPosition ?: 0L
+        isPlaying = mediaController.isPlaying
+        if (mediaController.currentPosition > 0L) {
+            currentValue = mediaController.currentPosition
+        }
+        val dur = mediaController.duration
+        if (dur > 1000L) {
+            currentDuration = dur
+        } else if (metaDurationMs > 1000L) {
+            currentDuration = metaDurationMs
+        }
 
         onDispose {
-            mediaController?.removeListener(listener)
+            mediaController.removeListener(listener)
         }
     }
 
@@ -189,7 +260,7 @@ fun PlaybackProgressSlider(
                         else -> false
                     }
                 },
-            value = animatedValue,
+            value = if (effectiveDur > 0L) animatedValue.coerceIn(0f, safeMax) else 0f,
             onValueChange = {
                 isInteracting = true
                 currentValue = it.toLong()
@@ -198,7 +269,7 @@ fun PlaybackProgressSlider(
                 isInteracting = false
                 mediaController?.seekTo(currentValue)
             },
-            valueRange = 0f..(currentDuration?.toFloat() ?: 0f),
+            valueRange = 0f..safeMax,
             colors = SliderDefaults.colors(
                 activeTrackColor = color,
                 inactiveTrackColor = color.copy(alpha = 0.25f),
@@ -223,7 +294,9 @@ fun PlaybackProgressSlider(
                 maxLines = 1
             )
             Text(
-                text = remember(currentDuration) { formatMilliseconds(currentDuration?.toInt()?.div(1000) ?: (currentValue/1000).toInt()) },
+                text = remember(effectiveDur) {
+                    formatMilliseconds(effectiveDur.toInt() / 1000)
+                },
                 fontWeight = FontWeight.Light,
                 textAlign = TextAlign.End,
                 color = color.copy(alpha = 0.5f),

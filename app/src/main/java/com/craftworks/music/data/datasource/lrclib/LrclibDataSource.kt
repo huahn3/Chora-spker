@@ -69,6 +69,8 @@ class LrclibDataSource @Inject constructor(
         val baseUrl = settingsManager.lrcLibEndpointFlow.first()
 
         val artist = metadata?.extras?.getString("lyricsArtist")
+            ?.takeIf { it.isNotBlank() }
+            ?: metadata?.artist?.toString()
         val title = metadata?.title
         val album = metadata?.albumTitle
         val duration = metadata?.durationMs?.div(1000)

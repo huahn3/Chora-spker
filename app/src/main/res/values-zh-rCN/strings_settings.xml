@@ -3,7 +3,8 @@
     <string name="Settings_Header_Appearance">外观</string>
     <string name="Setting_Username">名称</string>
     <string name="Setting_Background">背景样式</string>
-    <string name="Setting_Oled_Mode">OLED Protection</string>
+    <string name="Setting_Oled_Mode">OLED 防烧屏保护</string>
+    <string name="Setting_Screen_Standby">保持屏幕常亮 / 禁用休眠</string>
     <string name="Setting_Navbar_Items">导航栏项目</string>
     <string name="Setting_Home_Items">主页项目</string>
     <string name="Setting_MoreInfo">显示更多信息</string>
@@ -12,8 +13,8 @@
     <string name="Setting_ProviderDividers">显示媒体源分隔</string>
     <string name="Setting_RefreshAnimation">显示刷新动画</string>
     <string name="Setting_LyricsAnimationSpeed">歌词动画速度</string>
-    <string name="Setting_LyricsAutoscroll">Autoscroll Plain Lyrics</string>
-    <string name="Setting_LyricsRecenter">Recenter After Scroll</string>
+    <string name="Setting_LyricsAutoscroll">纯文本歌词自动滚动</string>
+    <string name="Setting_LyricsRecenter">滚动后自动归位当前歌词</string>
     <string name="Setting_TrackNumbersAlbum">专辑页显示曲目编号</string>
     <string name="Settings_Header_Media">媒体源</string>
     <string name="Settings_Header_Playback">播放</string>
@@ -22,5 +23,5 @@
     <string name="Setting_Transcoding_Data">最高比特率（移动数据）</string>
     <string name="Setting_Transcoding_Format">转码格式</string>
     <string name="Setting_Scrobble_Percent">最低收听记录百分比</string>
-    <string name="Setting_Scrobble_Description">Navidrome Only.</string>
+    <string name="Setting_Scrobble_Description">仅限 Navidrome</string>
 </resources>

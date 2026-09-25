@@ -57,7 +57,7 @@ fun MediaData.Song.toMediaItem(): MediaItem {
             .setExtras(Bundle().apply {
                 putString("navidromeID", this@toMediaItem.navidromeID)
                 putString("lyricsArtist", if (this@toMediaItem.artists.isNotEmpty()) this@toMediaItem.artists[0].name else this@toMediaItem.artist)
-                putInt("duration", this@toMediaItem.duration)
+                putLong("duration", this@toMediaItem.duration.toLong())
                 putString("format", this@toMediaItem.format)
                 putLong("bitrate", this@toMediaItem.bitrate?.toLong() ?: 0)
                 putBoolean("isRadio", this@toMediaItem.isRadio == true)
@@ -67,9 +67,18 @@ fun MediaData.Song.toMediaItem(): MediaItem {
                 putString("starred", this@toMediaItem.starred)
             }).build()
 
+    val rawMedia = this@toMediaItem.media?.trim()
+    val mediaUri = when {
+        rawMedia.isNullOrBlank() -> null
+        rawMedia.startsWith("/") -> android.net.Uri.fromFile(java.io.File(rawMedia))
+        rawMedia.startsWith("file:") -> rawMedia.toUri()
+        rawMedia.startsWith("content:") -> rawMedia.toUri()
+        rawMedia.startsWith("http:") || rawMedia.startsWith("https:") -> rawMedia.toUri()
+        else -> rawMedia.toUri()
+    }
     return MediaItem.Builder()
         .setMediaId(this@toMediaItem.media.toString())
-        .setUri(this@toMediaItem.media?.toUri())
+        .setUri(mediaUri)
         .setMediaMetadata(mediaMetadata)
         .build()
 }
@@ -88,13 +97,13 @@ fun MediaItem.toSong(): MediaData.Song {
         year = mediaMetadata.recordingYear ?: 0,
         duration = mediaMetadata.durationMs?.toInt()?.div(1000) ?: 0,
         format = extras?.getString("format") ?: "",
-        bitrate = extras?.getLong("bitrate")?.toInt(),
+        bitrate = (extras?.get("bitrate") as? Number)?.toInt(),
         media = this@toSong.mediaId.toString(),
         replayGain = ReplayGain(
             trackGain = extras?.getFloat("replayGain") ?: 0f
         ),
         isRadio = extras?.getBoolean("isRadio"),
-        path = "",
+        path = extras?.getString("path") ?: "",
         parent = "",
         dateAdded = "",
         bpm = 0,

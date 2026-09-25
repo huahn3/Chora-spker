@@ -15,6 +15,7 @@ import com.craftworks.music.ui.screens.HomeItem
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -26,6 +27,13 @@ enum class OLEDProtectionMode {
 }
 enum class AppTheme {
     LIGHT, DARK, SYSTEM
+}
+
+enum class PageTransitionStyle {
+    ELEGANT_SPRING,
+    CUBIC_BEZIER,
+    SNAPPY,
+    GENTLE
 }
 
 @Singleton
@@ -53,11 +61,12 @@ class AppearanceSettingsManager @Inject constructor(
 
         private val OLED_PROTECTION_MODE = stringPreferencesKey("oled_protection")
         private val DISABLE_SCREEN_STANDBY = booleanPreferencesKey("disable_screen_standby")
+        private val PAGE_TRANSITION_STYLE = stringPreferencesKey("page_transition_style")
     }
 
     val usernameFlow: Flow<String> = context.dataStore.data.map { preferences ->
         preferences[USERNAME_KEY] ?: "Username"
-    }
+    }.distinctUntilChanged()
 
     suspend fun setUsername(username: String) {
         withContext(NonCancellable) {
@@ -314,12 +323,30 @@ class AppearanceSettingsManager @Inject constructor(
 
     val disableScreenStandby: Flow<Boolean> = context.dataStore.data.map { preferences ->
         preferences[DISABLE_SCREEN_STANDBY] ?: false
-    }
+    }.distinctUntilChanged()
 
     suspend fun setDisableScreenStandby(enabled: Boolean) {
         withContext(NonCancellable) {
             context.dataStore.edit { preferences ->
                 preferences[DISABLE_SCREEN_STANDBY] = enabled
+            }
+        }
+    }
+
+    val pageTransitionStyleFlow: Flow<PageTransitionStyle> = context.dataStore.data.map { preferences ->
+        try {
+            PageTransitionStyle.valueOf(
+                preferences[PAGE_TRANSITION_STYLE] ?: PageTransitionStyle.ELEGANT_SPRING.name
+            )
+        } catch (e: Exception) {
+            PageTransitionStyle.ELEGANT_SPRING
+        }
+    }.distinctUntilChanged()
+
+    suspend fun setPageTransitionStyle(style: PageTransitionStyle) {
+        withContext(NonCancellable) {
+            context.dataStore.edit { preferences ->
+                preferences[PAGE_TRANSITION_STYLE] = style.name
             }
         }
     }

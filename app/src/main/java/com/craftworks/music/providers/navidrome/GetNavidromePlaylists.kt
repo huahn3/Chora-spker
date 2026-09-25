@@ -23,7 +23,7 @@ fun parseNavidromePlaylistsJSON(
     val passwordHashMedia = NavidromeDataSource.md5Hash(navidromePassword + passwordSaltMedia)
 
     subsonicResponse.playlists?.playlist?.map {
-        it.coverArt = "$navidromeUrl/rest/getCoverArt.view?&id=${it.navidromeID}&u=$navidromeUsername&t=$passwordHashMedia&s=$passwordSaltMedia&v=1.16.1&c=Chora&size=128"
+        it.coverArt = "$navidromeUrl/rest/getCoverArt.view?&id=${it.navidromeID}&u=$navidromeUsername&t=$passwordHashMedia&s=$passwordSaltMedia&v=1.16.1&c=Chora&size=300"
     }
 
     subsonicResponse.playlists?.playlist?.filterNot { newPlaylist ->
@@ -49,7 +49,7 @@ fun parseNavidromePlaylistJSON(
     val passwordHash = NavidromeDataSource.md5Hash(navidromePassword + passwordSalt)
 
     subsonicResponse.playlist?.songs?.map {
-        it.imageUrl = "$navidromeUrl/rest/getCoverArt.view?&id=${it.navidromeID}&u=$navidromeUsername&t=$passwordHash&s=$passwordSalt&v=1.16.1&c=Chora&size=128"
+        it.imageUrl = "$navidromeUrl/rest/getCoverArt.view?&id=${it.navidromeID}&u=$navidromeUsername&t=$passwordHash&s=$passwordSalt&v=1.16.1&c=Chora&size=300"
         it.media = "$navidromeUrl/rest/stream.view?&id=${it.navidromeID}&u=$navidromeUsername&t=$passwordHash&s=$passwordSalt&v=1.12.0&c=Chora"
     }
 

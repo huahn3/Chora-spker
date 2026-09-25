@@ -15,4 +15,26 @@
     <string name="widget_no_playing">Not Playing</string>
     <string name="widget_tap_to_open">Tap to open Chora</string>
     <string name="press_again_to_exit">Press back again to exit</string>
+    <string name="downloaded_music">Downloaded Music</string>
+    <string name="downloaded_music_desc">Offline music playback</string>
+    <string name="no_downloaded_music">No Downloaded Music</string>
+    <string name="no_downloaded_music_desc">Songs you download will appear here for offline playback</string>
+    <string name="play_all">Play All</string>
+    <string name="shuffle">Shuffle</string>
+    <string name="delete_from_device">Delete from Device</string>
+    <string name="play_next">Play Next</string>
+    <string name="add_to_queue">Add to Queue</string>
+    <string name="manage_local_folders">Manage Local Folders</string>
+    <string name="add_local_folder">Add Folder</string>
+    <string name="local_folder_desc">Manage local folders for offline playback</string>
+    <string name="select_folder_saf">Choose Folder</string>
+    <string name="manual_folder_path">Enter Folder Path</string>
+    <string name="folder_path_hint">e.g. /storage/emulated/0/Music</string>
+    <string name="all_filter">All</string>
+    <string name="downloaded_filter">Downloaded</string>
+    <string name="local_folders_filter">Local Folders</string>
+    <string name="source_downloaded">Downloaded</string>
+    <string name="source_local_folder">Local</string>
+    <string name="no_local_folders">No Local Folders</string>
+    <string name="no_local_folders_prompt">Tap the folder icon above to add music folders from your device</string>
 </resources>

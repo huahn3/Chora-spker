@@ -55,6 +55,7 @@ import com.craftworks.music.ui.screens.AlbumDetails
 import com.craftworks.music.ui.screens.AlbumScreen
 import com.craftworks.music.ui.screens.ArtistDetails
 import com.craftworks.music.ui.screens.ArtistsScreen
+import com.craftworks.music.ui.screens.DownloadedSongsScreen
 import com.craftworks.music.ui.screens.HomeListsScreen
 import com.craftworks.music.ui.screens.HomeScreen
 import com.craftworks.music.ui.screens.PlaylistDetails
@@ -184,6 +185,12 @@ fun SetupNavGraph(
                 }
             else
                 SongsScreen(mediaController, viewModel)
+        }
+        composable(route = Screen.Downloaded.route) {
+            DownloadedSongsScreen(
+                navController = navController,
+                mediaController = mediaController
+            )
         }
         composable(route = Screen.Radio.route) { backStackEntry ->
             val parentEntry = remember(backStackEntry) {

@@ -5,7 +5,12 @@ package com.craftworks.music.ui.playing
 import androidx.annotation.OptIn
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.AnimationSpec
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.FastOutLinearInEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
@@ -13,6 +18,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.pager.PagerDefaults
+import com.craftworks.music.managers.settings.PageTransitionStyle
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -33,18 +40,12 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.MoreVert
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
@@ -61,6 +62,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.res.vectorResource
@@ -84,7 +86,11 @@ import com.craftworks.music.player.ChoraMediaLibraryService
 import com.gigamole.composefadingedges.marqueeHorizontalFadingEdges
 import kotlinx.coroutines.launch
 
-@kotlin.OptIn(ExperimentalMaterial3ExpressiveApi::class, ExperimentalMaterial3Api::class)
+@kotlin.OptIn(
+    ExperimentalMaterial3ExpressiveApi::class,
+    ExperimentalMaterial3Api::class,
+    androidx.compose.foundation.ExperimentalFoundationApi::class
+)
 @Preview(
     showSystemUi = true, device = "id:pixel_9a",
     wallpaper = Wallpapers.BLUE_DOMINATED_EXAMPLE, showBackground = true
@@ -125,9 +131,64 @@ fun NowPlayingPortrait(
     val useLyricsBlur by settingsManager.nowPlayingLyricsBlurFlow.collectAsStateWithLifecycle(true)
     val lyricsAnimSpeed by settingsManager.lyricsAnimationSpeedFlow.collectAsStateWithLifecycle(1200)
 
-    val isRadio = metadata?.mediaType == MediaMetadata.MEDIA_TYPE_RADIO_STATION
+    val pageTransitionStyle by settingsManager.pageTransitionStyleFlow.collectAsStateWithLifecycle(
+        PageTransitionStyle.ELEGANT_SPRING
+    )
+
+    val snapAnimationSpec: AnimationSpec<Float> = remember(pageTransitionStyle) {
+        when (pageTransitionStyle) {
+            PageTransitionStyle.ELEGANT_SPRING -> tween(
+                durationMillis = 280,
+                easing = FastOutSlowInEasing
+            )
+            PageTransitionStyle.CUBIC_BEZIER -> tween(
+                durationMillis = 320,
+                easing = CubicBezierEasing(0.25f, 0.1f, 0.25f, 1.0f)
+            )
+            PageTransitionStyle.SNAPPY -> tween(
+                durationMillis = 200,
+                easing = FastOutSlowInEasing
+            )
+            PageTransitionStyle.GENTLE -> tween(
+                durationMillis = 380,
+                easing = FastOutSlowInEasing
+            )
+        }
+    }
+
+    val density = LocalDensity.current
     val pagerState = rememberPagerState(initialPage = 0, pageCount = { 2 })
-    var showLyricsOptionsSheet by remember { mutableStateOf(false) }
+    var isFlipping by remember { mutableStateOf(false) }
+    val flipRotation = remember { Animatable(0f) }
+
+    fun flipToPage(targetPage: Int) {
+        if (isFlipping) return
+        isFlipping = true
+        coroutineScope.launch {
+            val startAngle = if (targetPage == 1) 0f else 180f
+            val midAngle = 90f
+            val endAngle = if (targetPage == 1) 180f else 0f
+
+            flipRotation.snapTo(startAngle)
+            flipRotation.animateTo(
+                targetValue = midAngle,
+                animationSpec = tween(durationMillis = 200, easing = FastOutLinearInEasing)
+            )
+            pagerState.scrollToPage(targetPage)
+            flipRotation.animateTo(
+                targetValue = endAngle,
+                animationSpec = tween(durationMillis = 220, easing = LinearOutSlowInEasing)
+            )
+            isFlipping = false
+        }
+    }
+
+    val isRadio = metadata?.mediaType == MediaMetadata.MEDIA_TYPE_RADIO_STATION
+    val flingBehavior = PagerDefaults.flingBehavior(
+        state = pagerState,
+        snapAnimationSpec = snapAnimationSpec,
+        snapPositionalThreshold = 0.15f
+    )
 
     Column(
         modifier = Modifier
@@ -135,122 +196,101 @@ fun NowPlayingPortrait(
             .statusBarsPadding(),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // UPPER SECTION: HorizontalPager (Cover vs Lyrics) - Swiping only affects this area
-        HorizontalPager(
-            state = pagerState,
+        // UPPER SECTION: 3D Flip on Click / Smooth Slide on Swipe (Separated & Natural)
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
-        ) { page ->
-            if (page == 0) {
-                // PAGE 0: Album Artwork centered
+                .graphicsLayer {
+                    if (isFlipping) {
+                        rotationY = flipRotation.value
+                        cameraDistance = 18f * density.density
+                    }
+                }
+        ) {
+            CompositionLocalProvider(
+                androidx.compose.foundation.LocalOverscrollConfiguration provides null,
+                androidx.compose.foundation.LocalOverscrollFactory provides null
+            ) {
+                HorizontalPager(
+                    state = pagerState,
+                    flingBehavior = flingBehavior,
+                    modifier = Modifier.fillMaxSize()
+                ) { page ->
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(horizontal = 28.dp, vertical = 8.dp),
-                    contentAlignment = Alignment.Center
+                        .graphicsLayer {
+                            if (isFlipping && page == 1) {
+                                rotationY = 180f
+                            }
+                        }
                 ) {
-                    Crossfade(
-                        targetState = metadata?.artworkUri.toString().replace("size=128", "size=500"),
-                        animationSpec = tween(
-                            durationMillis = 400,
-                            easing = FastOutSlowInEasing
-                        ),
-                        label = "Crossfade between albums"
-                    ) { artworkUri ->
-                        SubcomposeAsyncImage(
-                            model = ImageRequest.Builder(context)
-                                .data(artworkUri)
-                                .placeholderMemoryCacheKey(metadata?.artworkUri.toString())
-                                .diskCachePolicy(CachePolicy.DISABLED)
-                                .build(),
-                            contentDescription = "Album Cover Art",
-                            contentScale = ContentScale.Crop,
-                            alignment = Alignment.Center,
+                    if (page == 0) {
+                        // PAGE 0: Album Artwork centered - Full original resolution without compression
+                        val fullResCoverUri = remember(metadata?.artworkUri) {
+                            metadata?.artworkUri?.toString()?.replace(Regex("&size=\\d+"), "") ?: ""
+                        }
+                        Box(
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .aspectRatio(1f)
-                                .shadow(elevation = 16.dp, shape = RoundedCornerShape(24.dp))
-                                .background(MaterialTheme.colorScheme.surfaceVariant)
-                                .clip(RoundedCornerShape(24.dp))
-                        )
-                    }
-                }
-            } else {
-                // PAGE 1: Dedicated Apple Music Lyrics
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 16.dp),
-                    verticalArrangement = Arrangement.SpaceBetween
-                ) {
-                    // Header Bar: Easy Return Button (Chevron + "封面") & Settings Button
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 4.dp, bottom = 4.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        // Return to Cover button - solves "歌词界面很难滑回去" instantly
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
+                                .fillMaxSize()
+                                .padding(horizontal = 28.dp, vertical = 8.dp)
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null
+                                ) {
+                                    flipToPage(1)
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Crossfade(
+                                targetState = fullResCoverUri,
+                                animationSpec = tween(
+                                    durationMillis = 400,
+                                    easing = FastOutSlowInEasing
+                                ),
+                                label = "Crossfade between albums"
+                            ) { artworkUri ->
+                                SubcomposeAsyncImage(
+                                    model = ImageRequest.Builder(context)
+                                        .data(artworkUri)
+                                        .placeholderMemoryCacheKey(metadata?.artworkUri.toString())
+                                        .diskCachePolicy(CachePolicy.DISABLED)
+                                        .build(),
+                                    contentDescription = "Album Cover Art",
+                                    contentScale = ContentScale.Crop,
+                                    alignment = Alignment.Center,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .aspectRatio(1f)
+                                        .shadow(elevation = 16.dp, shape = RoundedCornerShape(24.dp))
+                                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                                        .clip(RoundedCornerShape(24.dp))
+                                )
+                            }
+                        }
+                    } else {
+                        // PAGE 1: Dedicated Full-screen Lyrics (Return button & Settings removed as requested)
+                        Box(
                             modifier = Modifier
-                                .clip(RoundedCornerShape(12.dp))
-                                .clickable {
-                                    coroutineScope.launch {
-                                        pagerState.animateScrollToPage(0)
-                                    }
+                                .fillMaxSize()
+                                .padding(horizontal = 16.dp)
+                        ) {
+                            LyricsView(
+                                color = iconTextColor,
+                                isLandscape = false,
+                                mediaController = mediaController,
+                                onRefreshLyrics = onRefreshLyrics,
+                                onToggleView = {
+                                    flipToPage(0)
                                 }
-                                .padding(horizontal = 10.dp, vertical = 6.dp)
-                        ) {
-                            Icon(
-                                imageVector = ImageVector.vectorResource(R.drawable.chevron_down),
-                                contentDescription = "Back to Cover",
-                                tint = iconTextColor,
-                                modifier = Modifier
-                                    .size(22.dp)
-                                    .graphicsLayer { rotationZ = 90f }
-                            )
-                            Spacer(Modifier.width(6.dp))
-                            Text(
-                                text = "封面",
-                                style = MaterialTheme.typography.labelLarge,
-                                fontWeight = FontWeight.SemiBold,
-                                color = iconTextColor
                             )
                         }
-
-                        // Lyrics Settings Button ("可以在歌词界面给个按钮让我任意选择")
-                        IconButton(
-                            onClick = { showLyricsOptionsSheet = true },
-                            modifier = Modifier.size(40.dp)
-                        ) {
-                            Icon(
-                                imageVector = ImageVector.vectorResource(R.drawable.rounded_settings_24),
-                                tint = iconTextColor.copy(alpha = 0.85f),
-                                contentDescription = "Lyrics Settings",
-                                modifier = Modifier.size(24.dp)
-                            )
-                        }
-                    }
-
-                    // Middle: Apple Music Synced Lyrics View
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .weight(1f)
-                    ) {
-                        LyricsView(
-                            color = iconTextColor,
-                            isLandscape = false,
-                            mediaController = mediaController,
-                            onRefreshLyrics = onRefreshLyrics
-                        )
                     }
                 }
             }
         }
+    }
 
         // LOWER SECTION: FIXED / PINNED CONTROLS - NEVER MOVES WHEN SWIPING
         // Raised higher up with padding ("向上拉高一点")
@@ -353,7 +393,7 @@ fun NowPlayingPortrait(
                     text = buildString {
                         append(metadata?.extras?.getString("format")?.uppercase() ?: "")
                         append(" · ")
-                        append(metadata?.extras?.getLong("bitrate") ?: "")
+                        append((metadata?.extras?.get("bitrate") as? Number)?.toString() ?: "")
                         append(" · ")
                         append(
                             if (metadata?.extras?.getString("navidromeID")?.startsWith("Local_") == true)
@@ -377,7 +417,7 @@ fun NowPlayingPortrait(
             // Progress Slider
             if (!isRadio) {
                 Box(Modifier.fillMaxWidth()) {
-                    PlaybackProgressSlider(iconTextColor, mediaController)
+                    PlaybackProgressSlider(iconTextColor, mediaController, metadata)
                 }
             }
 
@@ -421,160 +461,6 @@ fun NowPlayingPortrait(
                     onLongClick = onAddToPlaylist
                 )
                 PlayQueueButton(iconTextColor, 32.dp, onToggleQueue)
-            }
-        }
-    }
-
-    // Lyrics Customization Sheet ("在歌词界面给个按钮让我任意选择")
-    if (showLyricsOptionsSheet) {
-        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-        ModalBottomSheet(
-            onDismissRequest = { showLyricsOptionsSheet = false },
-            sheetState = sheetState,
-            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 24.dp)
-                    .padding(bottom = 32.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                Text(
-                    text = "歌词显示偏好设置",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-
-                // 1. Alignment (Apple Music uses Left)
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(
-                        text = "排版对齐方式",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        FilterChip(
-                            selected = lyricsAlignment == NowPlayingAlignment.LEFT,
-                            onClick = {
-                                coroutineScope.launch {
-                                    settingsManager.setNowPlayingLyricsAlignment(NowPlayingAlignment.LEFT)
-                                }
-                            },
-                            label = { Text("居左 (Apple Music)") }
-                        )
-                        FilterChip(
-                            selected = lyricsAlignment == NowPlayingAlignment.CENTER,
-                            onClick = {
-                                coroutineScope.launch {
-                                    settingsManager.setNowPlayingLyricsAlignment(NowPlayingAlignment.CENTER)
-                                }
-                            },
-                            label = { Text("居中") }
-                        )
-                        FilterChip(
-                            selected = lyricsAlignment == NowPlayingAlignment.RIGHT,
-                            onClick = {
-                                coroutineScope.launch {
-                                    settingsManager.setNowPlayingLyricsAlignment(NowPlayingAlignment.RIGHT)
-                                }
-                            },
-                            label = { Text("居右") }
-                        )
-                    }
-                }
-
-                // 2. Blur Effect
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "歌词背景虚化 (Apple Music 景深)",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Text(
-                            text = "高亮当前唱词，将非活动行模糊虚化",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Switch(
-                        checked = useLyricsBlur,
-                        onCheckedChange = { checked ->
-                            coroutineScope.launch {
-                                settingsManager.setNowPlayingLyricsBlur(checked)
-                            }
-                        }
-                    )
-                }
-
-                // 3. Scroll Animation Speed
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(
-                        text = "歌词动画过渡速度",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        FilterChip(
-                            selected = lyricsAnimSpeed == 1200,
-                            onClick = {
-                                coroutineScope.launch {
-                                    settingsManager.setLyricsAnimationSpeed(1200)
-                                }
-                            },
-                            label = { Text("柔和动效 (1.2s)") }
-                        )
-                        FilterChip(
-                            selected = lyricsAnimSpeed == 600,
-                            onClick = {
-                                coroutineScope.launch {
-                                    settingsManager.setLyricsAnimationSpeed(600)
-                                }
-                            },
-                            label = { Text("标准 (0.6s)") }
-                        )
-                        FilterChip(
-                            selected = lyricsAnimSpeed == 250,
-                            onClick = {
-                                coroutineScope.launch {
-                                    settingsManager.setLyricsAnimationSpeed(250)
-                                }
-                            },
-                            label = { Text("快速 (0.25s)") }
-                        )
-                    }
-                }
-
-                // 4. Refresh Lyrics
-                Button(
-                    onClick = {
-                        onRefreshLyrics()
-                        showLyricsOptionsSheet = false
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primaryContainer,
-                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                    )
-                ) {
-                    Text("重新检索 / 刷新歌词")
-                }
             }
         }
     }

@@ -168,8 +168,6 @@ fun CreateMediaProviderDialog(
     var password: String by remember { mutableStateOf("") }
     var allowCerts: Boolean by remember { mutableStateOf(false) }
 
-    var dir: String by remember { mutableStateOf("/Music/") }
-
     val coroutineScope = rememberCoroutineScope()
 
     Dialog(onDismissRequest = { setShowDialog(false) }) {
@@ -190,83 +188,7 @@ fun CreateMediaProviderDialog(
                 style = MaterialTheme.typography.titleLarge
             )
 
-            var expanded by remember { mutableStateOf(false) }
 
-            val options = listOf(
-                stringResource(R.string.Source_Local),
-                stringResource(R.string.Source_Navidrome)
-            )
-            var selectedOptionText by remember { mutableStateOf(options[1]) }
-
-            ExposedDropdownMenuBox(
-                expanded = expanded,
-                onExpandedChange = { expanded = !expanded },
-            ) {
-                TextField(
-                    modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable),
-                    readOnly = true,
-                    value = selectedOptionText,
-                    onValueChange = {},
-                    label = { Text(stringResource(R.string.Dialog_Media_Source)) },
-                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
-                    colors = ExposedDropdownMenuDefaults.textFieldColors()
-                )
-
-                ExposedDropdownMenu(
-                    expanded = expanded,
-                    onDismissRequest = { expanded = false },
-                ) {
-                    options.forEach { selectionOption ->
-                        DropdownMenuItem(
-                            text = { Text(selectionOption) },
-                            onClick = {
-                                selectedOptionText = selectionOption
-                                expanded = false
-                            },
-                            contentPadding = ExposedDropdownMenuDefaults.ItemContentPadding
-                        )
-                    }
-                }
-            }
-
-            //region Local Folder
-            if (selectedOptionText == stringResource(R.string.Source_Local))
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    /* Directory */
-                    OutlinedTextField(
-                        value = dir,
-                        onValueChange = { dir = it },
-                        label = { Text(stringResource(R.string.Label_Local_Directory)) },
-                        singleLine = true
-                    )
-
-                    Button(
-                        onClick = {
-                            coroutineScope.launch {
-                                try {
-                                    LocalProviderManager.addFolder(dir)
-                                    setShowDialog(false)
-                                } catch (_: Exception) {
-                                    // DO NOTHING
-                                }
-                            }
-                        },
-                        modifier = Modifier
-                            .align(Alignment.CenterHorizontally)
-                            .bounceClick(),
-                    ) {
-                        Text(
-                            stringResource(R.string.Action_Add)
-                        )
-                    }
-                }
-            //endregion
-
-            //region Navidrome
-            else if (selectedOptionText == stringResource(R.string.Source_Navidrome))
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(12.dp)
