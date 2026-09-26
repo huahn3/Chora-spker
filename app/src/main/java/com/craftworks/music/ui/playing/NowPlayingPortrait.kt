@@ -107,6 +107,9 @@ fun NowPlayingPortrait(
     onToggleQueue: () -> Unit = {},
     onToggleDetails: () -> Unit = {},
     onOpenSleepTimer: () -> Unit = {},
+    onOpenJukebox: () -> Unit = {},
+    onToggleTranslation: () -> Unit = {},
+    onForceRetranslate: () -> Unit = {},
     onRefreshLyrics: () -> Unit = {}
 ) {
     val iconTextColor by animateColorAsState(
@@ -283,7 +286,9 @@ fun NowPlayingPortrait(
                                 onRefreshLyrics = onRefreshLyrics,
                                 onToggleView = {
                                     flipToPage(0)
-                                }
+                                },
+                                onToggleTranslation = onToggleTranslation,
+                                onForceRetranslate = onForceRetranslate
                             )
                         }
                     }
@@ -453,6 +458,7 @@ fun NowPlayingPortrait(
                     !(metadata?.extras?.getString("navidromeID")?.startsWith("Local_") ?: true)
                 )
                 SleepTimerButton(iconTextColor, 32.dp, sleepTimerMinutes, onOpenSleepTimer)
+                OutputDeviceButton(color = iconTextColor, size = 32.dp, onClick = onOpenJukebox)
                 FavoriteHeartButton(
                     color = iconTextColor,
                     size = 32.dp,

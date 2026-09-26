@@ -22,6 +22,8 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.craftworks.music.data.datasource.navidrome.NavidromeNativeApi
+import android.widget.Toast
 import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -32,6 +34,14 @@ object LyricsState {
     var open = mutableStateOf(false)
     var useLrcLib by mutableStateOf(true)
     var useNetEase by mutableStateOf(false)
+
+    // Lyrics Translation extensions
+    val isTranslationEnabled = MutableStateFlow(false)
+    val hasTranslation = MutableStateFlow(false)
+    val isTranslating = MutableStateFlow(false)
+    var originalLyrics: List<Lyric> = emptyList()
+    var translatedLyrics: List<Lyric>? = null
+    var currentSongId: String? = null
 }
 
 @Singleton
@@ -39,13 +49,20 @@ class LyricsRepository @Inject constructor(
     @ApplicationContext private val context: Context,
     val lrclibDataSource: LrclibDataSource,
     val neteaseDataSource: NeteaseDataSource,
-    val navidromeDataSource: NavidromeDataSource
+    val navidromeDataSource: NavidromeDataSource,
+    val navidromeNativeApi: NavidromeNativeApi
 ) {
     private var lyricsFetchJob: Job? = null
 
     suspend fun getLyrics(metadata: MediaMetadata?, ignoreCachedResponse: Boolean = false) {
         if (metadata?.mediaType == MediaMetadata.MEDIA_TYPE_RADIO_STATION) {
             LyricsState.lyrics.value = listOf()
+            LyricsState.originalLyrics = emptyList()
+            LyricsState.translatedLyrics = null
+            LyricsState.isTranslationEnabled.value = false
+            LyricsState.hasTranslation.value = false
+            LyricsState.isTranslating.value = false
+            LyricsState.currentSongId = null
             return
         }
 
@@ -60,6 +77,36 @@ class LyricsRepository @Inject constructor(
                 val artist = metadata?.artist?.toString() ?: ""
                 val navidromeID = metadata?.extras?.getString("navidromeID") ?: ""
 
+                LyricsState.currentSongId = navidromeID
+                LyricsState.isTranslationEnabled.value = false
+                LyricsState.hasTranslation.value = false
+                LyricsState.isTranslating.value = false
+                LyricsState.translatedLyrics = null
+                LyricsState.originalLyrics = emptyList()
+
+                // Probe cached translation in background if this is a Navidrome song
+                if (navidromeID.isNotBlank() && !navidromeID.startsWith("Local_") && NavidromeManager.checkActiveServers()) {
+                    launch {
+                        try {
+                            val cached = navidromeNativeApi.getCachedLyricsTranslation(navidromeID)
+                            if (cached != null && !cached.lines.isNullOrEmpty()) {
+                                val mapped = cached.lines.map { line ->
+                                    Lyric(
+                                        startMs = line.start,
+                                        endMs = line.end,
+                                        text = if (line.translation.isNotBlank()) listOf(line.original, line.translation) else listOf(line.original)
+                                    )
+                                }
+                                LyricsState.translatedLyrics = mapped
+                                LyricsState.hasTranslation.value = true
+                                Log.d("LYRICS_TRANSLATE", "Found cached translation for $navidromeID (${mapped.size} lines)")
+                            }
+                        } catch (e: Exception) {
+                            Log.w("LYRICS_TRANSLATE", "Cached translation probe failed: ${e.message}")
+                        }
+                    }
+                }
+
                 // 1. Check offline / local lyrics first
                 val localLyrics = withContext(Dispatchers.IO) {
                     findLocalLyrics(path, title, artist, navidromeID)
@@ -67,6 +114,7 @@ class LyricsRepository @Inject constructor(
 
                 if (!localLyrics.isNullOrEmpty()) {
                     Log.d("LYRICS", "Loaded local/offline lyrics (${localLyrics.size} lines)")
+                    LyricsState.originalLyrics = localLyrics
                     LyricsState.lyrics.value = localLyrics
                     LyricsState.loading.value = false
                     return@launch
@@ -170,6 +218,7 @@ class LyricsRepository @Inject constructor(
                         }
                     }
 
+                    LyricsState.originalLyrics = resultLyrics
                     LyricsState.lyrics.value = resultLyrics
                     LyricsState.loading.value = false
 
@@ -181,6 +230,107 @@ class LyricsRepository @Inject constructor(
                     }
                 }
             }
+        }
+    }
+
+    suspend fun toggleTranslation(context: Context) {
+        val songId = LyricsState.currentSongId
+        if (LyricsState.isTranslating.value) return
+
+        if (LyricsState.translatedLyrics != null) {
+            val newState = !LyricsState.isTranslationEnabled.value
+            LyricsState.isTranslationEnabled.value = newState
+            LyricsState.lyrics.value = if (newState) LyricsState.translatedLyrics!! else LyricsState.originalLyrics
+            return
+        }
+
+        if (songId.isNullOrBlank() || songId.startsWith("Local_") || !NavidromeManager.checkActiveServers()) {
+            withContext(Dispatchers.Main) {
+                Toast.makeText(context, "仅支持 Navidrome 在线歌曲翻译", Toast.LENGTH_SHORT).show()
+            }
+            return
+        }
+
+        LyricsState.isTranslating.value = true
+        withContext(Dispatchers.Main) {
+            Toast.makeText(context, "正在请求歌词翻译...", Toast.LENGTH_SHORT).show()
+        }
+
+        try {
+            val response = navidromeNativeApi.translateLyrics(songId, force = false)
+            if (response != null && !response.lines.isNullOrEmpty()) {
+                val mapped = response.lines.map { line ->
+                    Lyric(
+                        startMs = line.start,
+                        endMs = line.end,
+                        text = if (line.translation.isNotBlank()) listOf(line.original, line.translation) else listOf(line.original)
+                    )
+                }
+                LyricsState.translatedLyrics = mapped
+                LyricsState.hasTranslation.value = true
+                LyricsState.isTranslationEnabled.value = true
+                LyricsState.lyrics.value = mapped
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(context, "歌词翻译已完成", Toast.LENGTH_SHORT).show()
+                }
+            } else {
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(context, "暂无可翻译歌词或翻译未开启", Toast.LENGTH_SHORT).show()
+                }
+            }
+        } catch (e: Exception) {
+            withContext(Dispatchers.Main) {
+                Toast.makeText(context, "翻译失败: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        } finally {
+            LyricsState.isTranslating.value = false
+        }
+    }
+
+    suspend fun forceRetranslate(context: Context) {
+        val songId = LyricsState.currentSongId
+        if (LyricsState.isTranslating.value) return
+
+        if (songId.isNullOrBlank() || songId.startsWith("Local_") || !NavidromeManager.checkActiveServers()) {
+            withContext(Dispatchers.Main) {
+                Toast.makeText(context, "仅支持 Navidrome 在线歌曲翻译", Toast.LENGTH_SHORT).show()
+            }
+            return
+        }
+
+        LyricsState.isTranslating.value = true
+        withContext(Dispatchers.Main) {
+            Toast.makeText(context, "正在强制重新翻译歌词...", Toast.LENGTH_SHORT).show()
+        }
+
+        try {
+            val response = navidromeNativeApi.translateLyrics(songId, force = true)
+            if (response != null && !response.lines.isNullOrEmpty()) {
+                val mapped = response.lines.map { line ->
+                    Lyric(
+                        startMs = line.start,
+                        endMs = line.end,
+                        text = if (line.translation.isNotBlank()) listOf(line.original, line.translation) else listOf(line.original)
+                    )
+                }
+                LyricsState.translatedLyrics = mapped
+                LyricsState.hasTranslation.value = true
+                LyricsState.isTranslationEnabled.value = true
+                LyricsState.lyrics.value = mapped
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(context, "重新翻译完成", Toast.LENGTH_SHORT).show()
+                }
+            } else {
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(context, "重新翻译失败", Toast.LENGTH_SHORT).show()
+                }
+            }
+        } catch (e: Exception) {
+            withContext(Dispatchers.Main) {
+                Toast.makeText(context, "重新翻译失败: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        } finally {
+            LyricsState.isTranslating.value = false
         }
     }
 

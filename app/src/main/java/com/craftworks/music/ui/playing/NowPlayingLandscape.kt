@@ -71,7 +71,10 @@ fun NowPlayingLandscape(
     iconColor: Color = Color.White,
     sleepTimerMinutes: Int = 10,
     onOpenSleepTimer: () -> Unit = {},
+    onOpenJukebox: () -> Unit = {},
     onToggleQueue: () -> Unit = {},
+    onToggleTranslation: () -> Unit = {},
+    onForceRetranslate: () -> Unit = {},
     onRefreshLyrics: () -> Unit = {}
 ) {
     val iconTextColor by animateColorAsState(
@@ -270,6 +273,7 @@ fun NowPlayingLandscape(
                     !(metadata?.extras?.getString("navidromeID")?.startsWith("Local_") ?: true)
                 )
                 SleepTimerButton(iconTextColor, 32.dp, sleepTimerMinutes, onOpenSleepTimer)
+                OutputDeviceButton(iconTextColor, 32.dp, onOpenJukebox)
                 PlayQueueButton(iconTextColor, 32.dp, onToggleQueue)
             }
         }
@@ -287,7 +291,10 @@ fun NowPlayingLandscape(
                     true,
                     mediaController,
                     PaddingValues(horizontal = 32.dp, vertical = 16.dp),
-                    onRefreshLyrics
+                    onRefreshLyrics,
+                    onToggleView = {},
+                    onToggleTranslation = onToggleTranslation,
+                    onForceRetranslate = onForceRetranslate
                 )
             }
         }

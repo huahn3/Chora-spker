@@ -61,9 +61,13 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.MaterialTheme
@@ -127,6 +131,8 @@ fun LyricsView(
     paddingValues: PaddingValues = PaddingValues(),
     onRefreshLyrics: () -> Unit = {},
     onToggleView: () -> Unit = {},
+    onToggleTranslation: () -> Unit = {},
+    onForceRetranslate: () -> Unit = {},
 ) {
     val lyrics by LyricsState.lyrics.collectAsStateWithLifecycle()
     val loading by LyricsState.loading.collectAsStateWithLifecycle()
@@ -629,6 +635,63 @@ fun LyricsView(
                                     contentDescription = "Play from this lyric",
                                     tint = color,
                                     modifier = Modifier.size(24.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // Floating "译" Translation Action Button (Top-End)
+                val isTranslationEnabled by LyricsState.isTranslationEnabled.collectAsStateWithLifecycle()
+                val hasTranslation by LyricsState.hasTranslation.collectAsStateWithLifecycle()
+                val isTranslating by LyricsState.isTranslating.collectAsStateWithLifecycle()
+                val currentSongId = LyricsState.currentSongId
+                val isNavidromeSong = !currentSongId.isNullOrBlank() && !currentSongId.startsWith("Local_")
+
+                if (isNavidromeSong && lyrics.isNotEmpty()) {
+                    Surface(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(top = 16.dp, end = 20.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .combinedClickable(
+                                onClick = { onToggleTranslation() },
+                                onLongClick = { onForceRetranslate() }
+                            ),
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (isTranslationEnabled) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.85f)
+                                else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        border = BorderStroke(
+                            1.dp,
+                            if (isTranslationEnabled) MaterialTheme.colorScheme.primary.copy(alpha = 0.8f)
+                            else color.copy(alpha = 0.25f)
+                        )
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            if (isTranslating) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(12.dp),
+                                    strokeWidth = 2.dp,
+                                    color = if (isTranslationEnabled) MaterialTheme.colorScheme.primary else color
+                                )
+                            }
+                            Text(
+                                text = "译",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = if (isTranslationEnabled) MaterialTheme.colorScheme.primary
+                                        else color.copy(alpha = if (hasTranslation) 0.9f else 0.6f)
+                            )
+                            if (hasTranslation && !isTranslationEnabled) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(5.dp)
+                                        .clip(CircleShape)
+                                        .background(MaterialTheme.colorScheme.primary)
                                 )
                             }
                         }

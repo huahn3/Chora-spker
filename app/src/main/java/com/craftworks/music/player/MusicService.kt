@@ -43,6 +43,7 @@ import com.craftworks.music.data.repository.PlaylistRepository
 import com.craftworks.music.data.repository.RadioRepository
 import com.craftworks.music.data.repository.SongRepository
 import com.craftworks.music.managers.NavidromeManager
+import com.craftworks.music.managers.JukeboxManager
 import com.craftworks.music.widgets.MusicWidgetManager
 import com.craftworks.music.managers.TranscodeManager
 import com.craftworks.music.managers.settings.AppearanceSettingsManager
@@ -343,6 +344,14 @@ class ChoraMediaLibraryService : MediaLibraryService() {
                 val mediaMetadata = mediaItem?.mediaMetadata
                 val mediaId = mediaMetadata?.extras?.getString("navidromeID")
 
+                // Jukebox remote output: forward track change and keep local player muted
+                if (JukeboxManager.isRemoteActive.value) {
+                    player.volume = 0f
+                    if (!mediaId.isNullOrBlank() && !mediaId.startsWith("Local")) {
+                        JukeboxManager.playSong(mediaId, 0L)
+                    }
+                }
+
                 serviceIOScope.launch {
                     lyricsRepository.getLyrics(mediaMetadata)
                     if (mediaId != null && isPlayingNow) {
@@ -364,6 +373,16 @@ class ChoraMediaLibraryService : MediaLibraryService() {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 super.onIsPlayingChanged(isPlaying)
                 MusicWidgetManager.updateWidgets(this@ChoraMediaLibraryService)
+
+                // Jukebox remote output: forward pause/resume and keep local muted
+                if (JukeboxManager.isRemoteActive.value) {
+                    if (isPlaying) {
+                        player.volume = 0f
+                        JukeboxManager.control("resume")
+                    } else {
+                        JukeboxManager.control("pause")
+                    }
+                }
 
                 val mediaItem = player.currentMediaItem
                 val mediaId = mediaItem?.mediaMetadata?.extras?.getString("navidromeID")
@@ -398,6 +417,13 @@ class ChoraMediaLibraryService : MediaLibraryService() {
                     val mediaId = mediaItem?.mediaMetadata?.extras?.getString("navidromeID")
                     val isPlayingNow = player.isPlaying
                     val pos = newPosition.positionMs
+
+                    // Jukebox remote output: forward seek (if device supports it)
+                    if (JukeboxManager.isRemoteActive.value) {
+                        val posSec = (pos / 1000L).coerceAtLeast(0L)
+                        JukeboxManager.control("seek", posSec, this@ChoraMediaLibraryService)
+                    }
+
                     if (!mediaId.isNullOrBlank() && !mediaId.startsWith("Local") &&
                         mediaItem.mediaMetadata.mediaType != MediaMetadata.MEDIA_TYPE_RADIO_STATION
                     ) {

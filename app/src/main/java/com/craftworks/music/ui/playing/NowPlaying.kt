@@ -40,6 +40,7 @@ import com.craftworks.music.R
 import com.craftworks.music.managers.settings.OLEDProtectionMode
 import com.craftworks.music.player.ChoraMediaLibraryService
 import com.craftworks.music.ui.elements.dialogs.AddSongToPlaylist
+import com.craftworks.music.ui.elements.dialogs.JukeboxDeviceBottomSheet
 import com.craftworks.music.ui.elements.dialogs.RatingDialog
 import com.craftworks.music.ui.elements.dialogs.showAddSongToPlaylistDialog
 import com.craftworks.music.ui.elements.dialogs.songToAddToPlaylist
@@ -73,6 +74,7 @@ fun NowPlayingContent(
     val colors by viewModel.paletteColors.collectAsStateWithLifecycle()
     val iconTextColor by viewModel.iconTextColor.collectAsStateWithLifecycle()
     val isStarred by viewModel.isStarred.collectAsStateWithLifecycle()
+    val jukeboxDialogOpen by viewModel.jukeboxDialogOpen.collectAsStateWithLifecycle()
 
     val isSystemDark = if (oledProtectionMode != OLEDProtectionMode.OFF) true
         else isSystemInDarkTheme()
@@ -108,7 +110,11 @@ fun NowPlayingContent(
             iconColor = iconTextColor,
             sleepTimerMinutes = sleepTimerMinutes,
             onOpenSleepTimer = { viewModel.setSleepTimerDialogOpen(true) },
+            onOpenJukebox = { viewModel.setJukeboxDialogOpen(true) },
             onToggleQueue = { viewModel.setPlayQueueOpen(!playQueueOpen) },
+            onToggleTranslation = { viewModel.toggleLyricsTranslation() },
+            onForceRetranslate = { viewModel.forceRetranslateLyrics() },
+            onRefreshLyrics = { viewModel.refreshLyrics(metadata) }
         )
     } else {
         NowPlayingPortrait(
@@ -128,6 +134,9 @@ fun NowPlayingContent(
             onToggleQueue = { viewModel.setPlayQueueOpen(!playQueueOpen) },
             onToggleDetails = { viewModel.setDetailsOpen(!detailsOpen) },
             onOpenSleepTimer = { viewModel.setSleepTimerDialogOpen(true) },
+            onOpenJukebox = { viewModel.setJukeboxDialogOpen(true) },
+            onToggleTranslation = { viewModel.toggleLyricsTranslation() },
+            onForceRetranslate = { viewModel.forceRetranslateLyrics() },
             onRefreshLyrics = { viewModel.refreshLyrics(metadata) }
         )
     }
@@ -193,6 +202,13 @@ fun NowPlayingContent(
                 mediaController?.setRating(StarRating(5, rating.toFloat()))
             }
         )
+
+    if (jukeboxDialogOpen) {
+        JukeboxDeviceBottomSheet(
+            mediaController = mediaController,
+            onDismissRequest = { viewModel.setJukeboxDialogOpen(false) }
+        )
+    }
 }
 
 @Composable

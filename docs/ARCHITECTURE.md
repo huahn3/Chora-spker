@@ -98,6 +98,20 @@ val progress = if (effectiveDuration > 0L) {
 2. **收起态控制**：`enabled = !isPlayerExpanded`
    - 若当前位于首页 (`Screen.Home.route`) -> 2 秒内双击退出应用并保存持久化状态
    - 若位于其他子页面 -> 正常 `navController.popBackStack()`
+### 3.4 歌词翻译与双语对照体系 (Lyrics Translation)
+对接 Navidrome 扩展 Native REST API (`/api/lyrics/translate`)，实现毫秒级双语歌词逐行同步：
+1. **自动缓存探测**：播放 Navidrome 歌曲时，后台协程异步调用 `GET /api/lyrics/translate/{songId}?lang=zh-CN` 嗅探服务端永久缓存。若命中，点亮「译」图标小圆点。
+2. **交互行为契约**：
+   - **单击「译」**：若已有翻译则秒切双语对照（原文大字 + 译文小字）/ 仅原文；若无翻译则触发 `POST /api/lyrics/translate`。
+   - **长按「译」**：携带 `"force": true` 强制唤起服务端 AI 重新翻译并覆盖展示。
+3. **数据渲染一致性**：通过 `Lyric(startMs, text = listOf(original, translation))` 结构，天然与 `NowPlayingLyrics.kt` 多行透明度渲染引擎无缝衔接。
+
+### 3.5 Jukebox 多输出设备与四大铁律 (Remote Output Manager)
+服务端扩展多输出设备管理器（DeviceManager），支持局域网 MPD、DLNA UPnP 渲染器、小米小爱音箱原生协议：
+- **铁律 1（0 音量容错与 3 秒防抢手）**：DLNA/MPD 唤醒初次回报音量常为 0，客户端接收到 0 时坚决丢弃；用户拖动音量滑块 200ms 防抖，松手后 3 秒内屏蔽远端状态覆盖本地滑块。
+- **铁律 2（本地静音与时钟驱动）**：切换为远程音箱时，本地 ExoPlayer 设为 `player.volume = 0f`，保持 `playWhenReady = true`，锁屏与通知栏 `MediaSession`、桌面微件完美保活。
+- **铁律 3（协议能力动态降级）**：当 `deviceType == "xiaomi"` 时，原生协议无进度回报且不支持 seek，UI 进度条禁用拖拽并给出轻量友好提示。
+- **铁律 4（无缝流转带进度）**：切换到远程时携带当前本地播放秒数 `position`；切回本机时调用 `POST /api/jukebox/select` (`"browser"`)，本地播放器恢复音量出声。
 
 ---
 
@@ -108,20 +122,73 @@ app/src/main/java/com/craftworks/music/
 ├── MainActivity.kt                      # 全局入口、Scaffold 与多层返回键控制
 ├── managers/
 │   ├── NavidromeManager.kt              # Navidrome 节点发现、测速选路与鉴权
+│   ├── JukeboxManager.kt                # Jukebox 多输出设备调度与状态机 (遵守四大铁律)
 │   ├── settings/
 │   │   ├── LocalDataSettingsManager.kt  # 播放历史、歌单续播状态持久化
 │   │   └── AppearanceSettingsManager.kt # 界面主题、动效风格配置
 ├── player/
-│   ├── MusicService.kt                  # ChoraMediaLibraryService 核心播放服务
+│   ├── MusicService.kt                  # ChoraMediaLibraryService 核心播放服务 (Jukebox 控制转发)
 │   └── AudioOutputObserver.kt           # 耳机拔插、蓝牙音频设备路由监听
 ├── data/
-│   ├── model/Song.kt                    # 歌曲模型与 MediaItem/MediaMetadata 互转
-│   └── MediaNavidromeProvider.kt        # Navidrome API 交互封装
+│   ├── datasource/navidrome/
+│   │   ├── NavidromeDataSource.kt       # Subsonic 协议实现
+│   │   └── NavidromeNativeApi.kt        # Navidrome Native REST API (Bearer 握手/翻译/Jukebox)
+│   ├── model/
+│   │   ├── Song.kt                      # 歌曲模型与 MediaItem/MediaMetadata 互转
+│   │   ├── LyricsTranslationModel.kt    # 歌词翻译响应与行数据契约
+│   │   └── JukeboxModel.kt              # 多设备输出契约
+│   └── repository/
+│       └── LyricsRepository.kt          # 歌词拉取、缓存探测、翻译切换中枢
 └── ui/
+    ├── elements/dialogs/
+    │   └── JukeboxDeviceBottomSheet.kt  # 输出设备选择与远程音量调节浮层
     ├── playing/
     │   ├── NowPlayingMiniPlayer.kt      # 底部自适应浮层、圆形封面进度环
-    │   ├── NowPlayingPortrait.kt        # 竖屏全屏播放、封面歌词双页联动
+    │   ├── NowPlayingPortrait.kt        # 竖屏全屏播放、封面歌词双页联动、输出端入口
     │   ├── NowPlayingLandscape.kt       # 横屏分栏全屏播放
-    │   └── NowPlayingElements.kt        # 播放控制按钮、滑块组件、歌词视轨
+    │   ├── NowPlayingLyrics.kt          # 滚动歌词视轨、双语原文大字+译文小字、浮动译按钮
+    │   └── NowPlayingElements.kt        # 播放控制按钮、OutputDeviceButton、滑块组件
     └── screens/                         # 各功能一级与二级屏幕
 ```
+
+---
+
+## 5. Navidrome 原生扩展 API 契约与避坑指南
+
+Navidrome 扩展功能（Jukebox 多输出设备与歌词翻译）通过服务端的原生 Go 路由（`nativeapi`）提供支持。客户端必须严格遵循服务端的字段命名与序列化规范：
+
+### 5.1 字段命名规范对照 (重大避坑警示)
+
+| 业务模块 | 接口 | 关键字段名 | 字段大小写 | 序列化注解必须 | 踩坑后果 |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Jukebox 选择设备** | `POST /api/jukebox/select` | `device_id` | **snake_case** | `@SerialName("device_id")` | 若误传 camelCase `deviceId`，Go 会解码成空串 `""`，服务端回退为 `browser` 且返回 200，导致设备无法切换且后续播放报错 |
+| **Jukebox 播放曲目** | `POST /api/jukebox/play` | `song_id`, `stream_url`, `position` | **snake_case** | `@SerialName("song_id")` | 若误传 camelCase `songId`，Go 解析为空串，报错 `HTTP 400: either song_id or stream_url is required` |
+| **Jukebox 设备状态** | `GET /api/jukebox/status` | `currentTime`, `duration`, `volume`, `deviceId`, `deviceType` | **camelCase** | 保持与响应字段完全一致 | 注意与请求体 snake_case 区分 |
+| **歌词翻译请求** | `POST /api/lyrics/translate` | `songId`, `targetLang`, `force` | **camelCase** | 无需额外下划线转换 | 与 Jukebox 请求格式不同，设计上使用驼峰命名 |
+
+### 5.2 鉴权机制与 401 自动重试
+- **Token 交换**：客户端使用用户凭据调用 `POST /auth/login` 获取 Bearer JWT Token。
+- **并发保护**：在 `NavidromeNativeApi.kt` 中使用 `loginMutex.withLock`，防止多协程并发刷新 Token 导致令牌风暴。
+- **双重请求头**：请求必须同时注入 `Authorization: Bearer <token>` 与 `X-ND-Authorization: Bearer <token>`，以兼容各类反向代理中间件。
+- **401 自动愈合**：捕获 `HttpStatusCode.Unauthorized` 时，自动强制 `forceRefresh = true` 重新握手并透明重发原始请求。
+
+---
+
+## 6. 疑难排查与诊断手册 (Troubleshooting)
+
+### 6.1 输出设备切换后仍显示“本机（Browser）”
+1. **排查日志**：过滤 `JUKEBOX:V`。检查 `selectJukeboxDevice` 发送的 payload 是否为 `{"device_id":"<id>"}`。
+2. **原因定位**：若发送了 `{"deviceId":"..."}`，Navidrome 服务端 Go 解码为空串并退回 `browser`。检查 `JukeboxModel.kt` 中的 `JukeboxSelectRequest` 是否包含 `@SerialName("device_id")`。
+
+### 6.2 切换远程音箱后无声音，本地手机也静音
+1. **本地静音原因**：符合**铁律 6.2**，切换远程时本地 ExoPlayer 设为 `volume = 0f` 以保持前台 MediaSession。
+2. **远程无声音排查**：
+   - 检查 `playJukebox` 是否返回 `HTTP 400`（字段未用 `song_id`）或 `HTTP 409`（未选中远程设备）。
+   - 检查服务端是否能访问 Subsonic stream 基础地址（服务端日志提示 `Jukebox stream URL points at loopback` 时需配置 `ND_BASEURL`）。
+
+### 6.3 小爱音箱无法拖拽进度条
+- **原因**：符合**铁律 6.3**，小爱音箱原生协议（MIoT execute-text-directive / play）不支持 seek 指令，且硬件不返回实时播放进度，客户端动态降级禁用进度条滑动。
+
+### 6.4 歌词翻译小圆点不亮或无法获取翻译
+1. **原因 1（无缓存 404）**：新歌曲首次播放时无缓存属正常现象，点击「译」即可触发服务端实时翻译。
+2. **原因 2（服务端未配置 API Key）**：Navidrome 服务端未配置翻译引擎（OpenAI/Gemini/DeepSeek）密钥，服务端返回 `HTTP 400 (translation API key not configured)`。

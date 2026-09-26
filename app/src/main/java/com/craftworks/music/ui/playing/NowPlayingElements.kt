@@ -43,6 +43,8 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.craftworks.music.managers.JukeboxManager
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -491,6 +493,45 @@ fun PlayQueueButton(
             contentDescription = null,
             modifier = Modifier
                 .size(size)
+        )
+    }
+}
+
+@Composable
+fun OutputDeviceButton(
+    color: Color = Color.Black,
+    size: Dp = 32.dp,
+    onClick: () -> Unit = {}
+) {
+    val isRemoteActive by JukeboxManager.isRemoteActive.collectAsStateWithLifecycle()
+    val selectedDevice by JukeboxManager.selectedDevice.collectAsStateWithLifecycle()
+
+    val icon = when (selectedDevice?.type) {
+        "browser" -> ImageVector.vectorResource(R.drawable.rounded_phone_24)
+        "dlna" -> ImageVector.vectorResource(R.drawable.rounded_cast_24)
+        else -> ImageVector.vectorResource(R.drawable.rounded_speaker_24)
+    }
+
+    Button(
+        onClick = onClick,
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier
+            .bounceClick()
+            .size(size + 12.dp),
+        contentPadding = PaddingValues(6.dp),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = if (isRemoteActive) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
+                            else Color.Transparent,
+            disabledContainerColor = Color.Transparent,
+            contentColor = if (isRemoteActive) MaterialTheme.colorScheme.primary else color.copy(alpha = 0.5f),
+            disabledContentColor = color.copy(alpha = 0.25f)
+        )
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = "Output Device",
+            modifier = Modifier.size(size),
+            tint = if (isRemoteActive) MaterialTheme.colorScheme.primary else color.copy(alpha = 0.75f)
         )
     }
 }

@@ -58,10 +58,26 @@ class NowPlayingViewModel @Inject constructor (
     private val _sleepTimerDialogOpen = MutableStateFlow(false)
     val sleepTimerDialogOpen = _sleepTimerDialogOpen.asStateFlow()
 
+    private val _jukeboxDialogOpen = MutableStateFlow(false)
+    val jukeboxDialogOpen = _jukeboxDialogOpen.asStateFlow()
+
     fun setLyricsOpen(open: Boolean) { _lyricsOpen.value = open }
     fun setPlayQueueOpen(open: Boolean) { _playQueueOpen.value = open }
     fun setDetailsOpen(open: Boolean) { _detailsOpen.value = open }
     fun setSleepTimerDialogOpen(open: Boolean) { _sleepTimerDialogOpen.value = open }
+    fun setJukeboxDialogOpen(open: Boolean) { _jukeboxDialogOpen.value = open }
+
+    fun toggleLyricsTranslation() {
+        viewModelScope.launch {
+            lyricsRepository.toggleTranslation(context)
+        }
+    }
+
+    fun forceRetranslateLyrics() {
+        viewModelScope.launch {
+            lyricsRepository.forceRetranslate(context)
+        }
+    }
 
     val backgroundStyle = appearanceSettingsManager.npBackgroundFlow
     val oledProtectionMode = appearanceSettingsManager.oledProtectionMode
