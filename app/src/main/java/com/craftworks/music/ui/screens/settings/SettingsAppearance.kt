@@ -1,5 +1,6 @@
 package com.craftworks.music.ui.screens.settings
 
+import com.craftworks.music.managers.settings.rememberAppearanceSettings
 import android.content.res.Configuration
 import android.os.Build
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -77,7 +78,6 @@ import com.craftworks.music.ui.elements.dialogs.dialogFocusable
 import com.craftworks.music.ui.playing.NowPlayingBackground
 import com.craftworks.music.ui.playing.NowPlayingAlignment
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 
 @OptIn(ExperimentalComposeUiApi::class, ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
@@ -98,11 +98,11 @@ fun S_AppearanceScreen(navHostController: NavHostController = rememberNavControl
     val focusRequester = remember { FocusRequester() }
 
     // Now Playing Title Alignment
-    val nowPlayingTitleAlignment by AppearanceSettingsManager(context).nowPlayingTitleAlignment.collectAsState(
+    val nowPlayingTitleAlignment by rememberAppearanceSettings().nowPlayingTitleAlignment.collectAsState(
         NowPlayingAlignment.LEFT
     )
     // Now Playing Lyrics Alignment
-    val nowPlayingLyricsAlignment by AppearanceSettingsManager(context).nowPlayingLyricsAlignment.collectAsState(
+    val nowPlayingLyricsAlignment by rememberAppearanceSettings().nowPlayingLyricsAlignment.collectAsState(
         NowPlayingAlignment.CENTER
     )
     val alignmentLabels = mapOf(
@@ -195,7 +195,7 @@ fun S_AppearanceScreen(navHostController: NavHostController = rememberNavControl
                     modifier = Modifier.clip(RoundedCornerShape(16.dp))
                 ) {
                     //Username
-                    val username by AppearanceSettingsManager(context).usernameFlow.collectAsState("Username")
+                    val username by rememberAppearanceSettings().usernameFlow.collectAsState("Username")
 
                     SettingsDialogButton(
                         stringResource(R.string.Setting_Username),
@@ -212,7 +212,7 @@ fun S_AppearanceScreen(navHostController: NavHostController = rememberNavControl
                     verticalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
                     //Theme
-                    val selectedTheme by AppearanceSettingsManager(context).appTheme.collectAsState(
+                    val selectedTheme by rememberAppearanceSettings().appTheme.collectAsState(
                         AppTheme.SYSTEM.name
                     )
                     val themes = listOf(
@@ -235,7 +235,7 @@ fun S_AppearanceScreen(navHostController: NavHostController = rememberNavControl
                     )
 
                     //Background Style
-                    val backgroundType by AppearanceSettingsManager(context).npBackgroundFlow.collectAsState(
+                    val backgroundType by rememberAppearanceSettings().npBackgroundFlow.collectAsState(
                         NowPlayingBackground.STATIC_BLUR
                     )
 
@@ -256,9 +256,22 @@ fun S_AppearanceScreen(navHostController: NavHostController = rememberNavControl
                         }
                     )
 
+                    //Global cover-driven theme
+                    val coverThemeEnabled by rememberAppearanceSettings().coverThemeFlow.collectAsStateWithLifecycle(true)
+                    SettingsSwitch(
+                        coverThemeEnabled,
+                        "全局跟随封面配色",
+                        ImageVector.vectorResource(R.drawable.round_music_note_24),
+                        toggleEvent = {
+                            coroutineScope.launch {
+                                AppearanceSettingsManager(context).setCoverTheme(!coverThemeEnabled)
+                            }
+                        }
+                    )
+
                     //Disable Screen Standby
                     val disableScreenStandby =
-                        AppearanceSettingsManager(context).disableScreenStandby.collectAsState(true)
+                        rememberAppearanceSettings().disableScreenStandby.collectAsState(true)
                     SettingsSwitch(
                         disableScreenStandby.value,
                         stringResource(R.string.Setting_Screen_Standby),
@@ -282,7 +295,7 @@ fun S_AppearanceScreen(navHostController: NavHostController = rememberNavControl
                         )
                     }
                     val enabledNavbarItems =
-                        AppearanceSettingsManager(context).bottomNavItemsFlow.collectAsState(
+                        rememberAppearanceSettings().bottomNavItemsFlow.collectAsState(
                             emptyList()
                         ).value
                             .filter { it.enabled }
@@ -307,7 +320,7 @@ fun S_AppearanceScreen(navHostController: NavHostController = rememberNavControl
                         )
                     }
                     val enabledHomeItems =
-                        AppearanceSettingsManager(context).homeItemsItemsFlow.collectAsState(
+                        rememberAppearanceSettings().homeItemsItemsFlow.collectAsState(
                             emptyList()
                         ).value
                             .filter { it.enabled }
@@ -346,7 +359,7 @@ fun S_AppearanceScreen(navHostController: NavHostController = rememberNavControl
                 ) {
 
                     // Page Transition Animation Option
-                    val pageTransitionStyle by AppearanceSettingsManager(context).pageTransitionStyleFlow.collectAsState(
+                    val pageTransitionStyle by rememberAppearanceSettings().pageTransitionStyleFlow.collectAsState(
                         com.craftworks.music.managers.settings.PageTransitionStyle.ELEGANT_SPRING
                     )
                     val transitionStyleLabels = mapOf(
@@ -364,7 +377,7 @@ fun S_AppearanceScreen(navHostController: NavHostController = rememberNavControl
                         }
                     )
                     //Lyrics blur Info
-                    val nowPlayingLyricsBlur by AppearanceSettingsManager(context).nowPlayingLyricsBlurFlow.collectAsStateWithLifecycle(true)
+                    val nowPlayingLyricsBlur by rememberAppearanceSettings().nowPlayingLyricsBlurFlow.collectAsStateWithLifecycle(true)
                     SettingsSwitch(
                         nowPlayingLyricsBlur,
                         stringResource(R.string.Setting_NowPlayingLyricsBlur),
@@ -377,7 +390,7 @@ fun S_AppearanceScreen(navHostController: NavHostController = rememberNavControl
                         enabled = Build.VERSION.SDK_INT > Build.VERSION_CODES.TIRAMISU
                     )
 
-                    val lyricsAutoScroll by AppearanceSettingsManager(context).lyricsAutoScroll.collectAsStateWithLifecycle(true)
+                    val lyricsAutoScroll by rememberAppearanceSettings().lyricsAutoScroll.collectAsStateWithLifecycle(true)
                     SettingsSwitch(
                         lyricsAutoScroll,
                         stringResource(R.string.Setting_LyricsAutoscroll),
@@ -389,7 +402,7 @@ fun S_AppearanceScreen(navHostController: NavHostController = rememberNavControl
                         }
                     )
 
-                    val lyricsRecenterAfterScroll by AppearanceSettingsManager(context).lyricsRecenterAfterScroll.collectAsStateWithLifecycle(true)
+                    val lyricsRecenterAfterScroll by rememberAppearanceSettings().lyricsRecenterAfterScroll.collectAsStateWithLifecycle(true)
                     SettingsSwitch(
                         lyricsRecenterAfterScroll,
                         stringResource(R.string.Setting_LyricsRecenter),
@@ -403,7 +416,7 @@ fun S_AppearanceScreen(navHostController: NavHostController = rememberNavControl
 
                     // Lyrics Animation Speed
                     val lyricsAnimationSpeed =
-                        AppearanceSettingsManager(context).lyricsAnimationSpeedFlow.collectAsState(
+                        rememberAppearanceSettings().lyricsAnimationSpeedFlow.collectAsState(
                             1200
                         )
                     val interactionSource = remember { MutableInteractionSource() }
@@ -433,7 +446,7 @@ fun S_AppearanceScreen(navHostController: NavHostController = rememberNavControl
                                 .onKeyEvent { keyEvent ->
                                     when (keyEvent.key) {
                                         Key.DirectionRight if keyEvent.type == KeyEventType.KeyDown -> {
-                                            runBlocking {
+                                            coroutineScope.launch {
                                                 AppearanceSettingsManager(context)
                                                     .setLyricsAnimationSpeed(
                                                         (lyricsAnimationSpeed.value - 300).coerceAtLeast(
@@ -445,7 +458,7 @@ fun S_AppearanceScreen(navHostController: NavHostController = rememberNavControl
                                         }
 
                                         Key.DirectionLeft if keyEvent.type == KeyEventType.KeyDown -> {
-                                            runBlocking {
+                                            coroutineScope.launch {
                                                 AppearanceSettingsManager(context)
                                                     .setLyricsAnimationSpeed(
                                                         (lyricsAnimationSpeed.value + 300).coerceAtMost(
@@ -464,7 +477,7 @@ fun S_AppearanceScreen(navHostController: NavHostController = rememberNavControl
                             steps = 5,
                             onValueChange = { uiValue ->
                                 val real = (2400f - (uiValue - 600f)).coerceIn(600f, 2400f)
-                                runBlocking {
+                                coroutineScope.launch {
                                     AppearanceSettingsManager(context).setLyricsAnimationSpeed(real.toInt())
                                 }
                             },
@@ -480,7 +493,7 @@ fun S_AppearanceScreen(navHostController: NavHostController = rememberNavControl
                 ) {
                     //More Song Info
                     val showMoreInfo =
-                        AppearanceSettingsManager(context).showMoreInfoFlow.collectAsState(true)
+                        rememberAppearanceSettings().showMoreInfoFlow.collectAsState(true)
                     SettingsSwitch(
                         showMoreInfo.value,
                         stringResource(R.string.Setting_MoreInfo),
@@ -494,7 +507,7 @@ fun S_AppearanceScreen(navHostController: NavHostController = rememberNavControl
 
                     //Show Navidrome Logo
                     val showNavidromeLogo =
-                        AppearanceSettingsManager(context).showNavidromeLogoFlow.collectAsState(true)
+                        rememberAppearanceSettings().showNavidromeLogoFlow.collectAsState(true)
                     SettingsSwitch(
                         showNavidromeLogo.value,
                         stringResource(R.string.Setting_NavidromeLogo),
@@ -508,7 +521,7 @@ fun S_AppearanceScreen(navHostController: NavHostController = rememberNavControl
 
                     //Show Provider Dividers
                     val showProviderDividers =
-                        AppearanceSettingsManager(context).showProviderDividersFlow.collectAsState(
+                        rememberAppearanceSettings().showProviderDividersFlow.collectAsState(
                             true
                         )
                     SettingsSwitch(
@@ -524,7 +537,7 @@ fun S_AppearanceScreen(navHostController: NavHostController = rememberNavControl
 
                     //Refresh Ripple
                     val refreshRipple =
-                        AppearanceSettingsManager(context).refreshAnimationFlow.collectAsState(true)
+                        rememberAppearanceSettings().refreshAnimationFlow.collectAsState(true)
                     SettingsSwitch(
                         refreshRipple.value,
                         stringResource(R.string.Setting_RefreshAnimation),
@@ -539,7 +552,7 @@ fun S_AppearanceScreen(navHostController: NavHostController = rememberNavControl
 
                     // Track numbers in album view
                     val showTrackNumbers =
-                        AppearanceSettingsManager(context).showTrackNumbersFlow.collectAsState(true)
+                        rememberAppearanceSettings().showTrackNumbersFlow.collectAsState(true)
                     SettingsSwitch(
                         showTrackNumbers.value,
                         stringResource(R.string.Setting_TrackNumbersAlbum),
@@ -575,7 +588,7 @@ fun S_AppearanceScreen(navHostController: NavHostController = rememberNavControl
                 title = stringResource(R.string.Setting_NowPlayingTitleAlignment),
                 selection = nowPlayingTitleAlignment,
                 onSet = {
-                    runBlocking {
+                    coroutineScope.launch {
                         AppearanceSettingsManager(context).setNowPlayingTitleAlignment(it)
                     }
                 }
@@ -584,7 +597,7 @@ fun S_AppearanceScreen(navHostController: NavHostController = rememberNavControl
         if(showPageTransitionDialog)
             com.craftworks.music.ui.elements.dialogs.PageTransitionStyleDialog(
                 setShowDialog = { showPageTransitionDialog = it },
-                selection = AppearanceSettingsManager(context).pageTransitionStyleFlow.collectAsState(
+                selection = rememberAppearanceSettings().pageTransitionStyleFlow.collectAsState(
                     com.craftworks.music.managers.settings.PageTransitionStyle.ELEGANT_SPRING
                 ).value,
                 onSet = { style ->

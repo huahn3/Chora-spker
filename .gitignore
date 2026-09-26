@@ -13,3 +13,9 @@ local.properties
 /crowdin.yml
 /.idea/
 /.kotlin/
+# Build artifacts
+*.apk
+*.aab
+*.keystore
+*.jks
+keystore.properties

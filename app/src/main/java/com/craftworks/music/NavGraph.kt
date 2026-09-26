@@ -1,5 +1,8 @@
 package com.craftworks.music
 
+import com.craftworks.music.managers.settings.rememberAppearanceSettings
+import com.craftworks.music.managers.settings.rememberLocalDataSettings
+import com.craftworks.music.managers.settings.rememberMediaProviderSettings
 import android.content.res.Configuration
 import android.util.Log
 import androidx.compose.animation.core.tween
@@ -28,6 +31,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -36,6 +40,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
+import com.craftworks.music.ui.isWideLayout
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -99,17 +104,34 @@ fun SetupNavGraph(
     val isTv = LocalConfiguration.current.uiMode and
             Configuration.UI_MODE_TYPE_MASK == Configuration.UI_MODE_TYPE_TELEVISION
 
-    playlistList =
-        LocalDataSettingsManager(context).localPlaylists.collectAsStateWithLifecycle(mutableListOf()).value
+    // Writing these globals in the composition body is a side effect that ran on
+    // every recomposition of the whole NavHost. Collect here, publish in an
+    // effect so the mutation happens exactly once per value change.
+    val localPlaylists = rememberLocalDataSettings().localPlaylists
+        .collectAsStateWithLifecycle(mutableListOf()).value
+    val useLrcLib = rememberMediaProviderSettings().lrcLibLyricsFlow
+        .collectAsStateWithLifecycle(true).value
+    val useNetEase = rememberMediaProviderSettings().netEaseLyricsFlow
+        .collectAsStateWithLifecycle(false).value
 
-    LyricsState.useLrcLib =
-        MediaProviderSettingsManager(context).lrcLibLyricsFlow.collectAsStateWithLifecycle(true).value
+    LaunchedEffect(localPlaylists) { playlistList = localPlaylists }
+    LaunchedEffect(useLrcLib) { LyricsState.useLrcLib = useLrcLib }
+    LaunchedEffect(useNetEase) { LyricsState.useNetEase = useNetEase }
 
-    LyricsState.useNetEase =
-        MediaProviderSettingsManager(context).netEaseLyricsFlow.collectAsStateWithLifecycle(false).value
-
-    val leftPadding = if (LocalConfiguration.current.orientation != Configuration.ORIENTATION_LANDSCAPE || isTv) 0.dp else 80.dp + WindowInsets.safeDrawing.asPaddingValues().calculateLeftPadding(
-        LayoutDirection.Ltr)
+    // Side rail lives on the *start* edge, so the content inset must follow the
+    // layout direction. Hardcoding LayoutDirection.Ltr put the inset on the right
+    // in RTL locales. The rail's own width (80dp) is applied by the rail itself;
+    // here we only need the system gesture/inset allowance.
+    val layoutDirection = LocalLayoutDirection.current
+    val startPadding = if (LocalConfiguration.current.orientation != Configuration.ORIENTATION_LANDSCAPE || isTv) {
+        0.dp
+    } else {
+        // This Compose version has no calculateStartPadding(); pick the
+        // direction-aware side by hand instead of hardcoding LTR.
+        val pv = WindowInsets.safeDrawing.asPaddingValues()
+        if (layoutDirection == LayoutDirection.Rtl) pv.calculateRightPadding(layoutDirection)
+        else pv.calculateLeftPadding(layoutDirection)
+    }
 
     val animationSpec = MaterialTheme.LocalMotionScheme.current.slowSpatialSpec<Float>()
 
@@ -118,7 +140,7 @@ fun SetupNavGraph(
     NavHost(
         navController = navController,
         startDestination = Screen.Home.route,
-        modifier = Modifier.padding(bottom = bottomPadding, start = leftPadding),
+        modifier = Modifier.padding(bottom = bottomPadding, start = startPadding),
         enterTransition = {
             fadeIn(animationSpec)
         },
@@ -133,7 +155,6 @@ fun SetupNavGraph(
         },
         route = "main_graph"
     ) {
-        println("Recomposing NavHost!")
         composable(route = Screen.Home.route) { backStackEntry ->
             val parentEntry = remember(backStackEntry) {
                 navController.getBackStackEntry("main_graph")
@@ -369,10 +390,17 @@ fun SetupNavGraph(
         }
 
         composable(route = Screen.NowPlayingLandscape.route) {
-            if (LocalWindowInfo.current.containerSize.width < dpToPx(640)) {
-                navController.popBackStack()
-                navController.navigate(Screen.Home.route) {
-                    launchSingleTop = true
+            val tooNarrow = !isWideLayout()
+            // Navigating from the composition body is a side effect: it re-ran on
+            // every recomposition (e.g. each metadata change) and pushed a second
+            // Home onto a stack it had just popped. popUpTo(startDestination)
+            // resets the stack in one step instead of pop + push.
+            LaunchedEffect(tooNarrow) {
+                if (tooNarrow) {
+                    navController.navigate(Screen.Home.route) {
+                        popUpTo(navController.graph.startDestinationId) { inclusive = true }
+                        launchSingleTop = true
+                    }
                 }
             }
 
@@ -408,12 +436,18 @@ fun SetupNavGraph(
             NowPlayingContent(
                 mediaController,
                 metadata,
-                viewModel
+                viewModel,
+                // MainActivity already hosts the queue / jukebox sheets at the
+                // Activity level. Leaving these true mounted a SECOND
+                // ModalBottomSheet for the same global state, so both fired
+                // onDismissRequest at once.
+                showInternalQueue = false,
+                showJukeboxSheet = false
             )
 
             // Keep screen on
             val currentView = LocalView.current
-            val disableScreenStandy by AppearanceSettingsManager(LocalContext.current).disableScreenStandby.collectAsStateWithLifecycle(true)
+            val disableScreenStandy by rememberAppearanceSettings().disableScreenStandby.collectAsStateWithLifecycle(true)
             DisposableEffect(Unit) {
                 if (disableScreenStandy) {
                     currentView.keepScreenOn = true

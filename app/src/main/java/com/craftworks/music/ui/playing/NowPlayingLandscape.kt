@@ -50,7 +50,6 @@ import androidx.media3.common.MediaMetadata
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaController
 import coil.compose.AsyncImage
-import coil.request.CachePolicy
 import coil.request.ImageRequest
 import com.craftworks.music.R
 import com.craftworks.music.data.repository.LyricsState
@@ -114,7 +113,6 @@ fun NowPlayingLandscape(
                     .data(metadata?.artworkUri.toString().replace("size=128", "size=500"))
                     .placeholderMemoryCacheKey(metadata?.artworkUri.toString())
                     .crossfade(true)
-                    .diskCachePolicy(CachePolicy.DISABLED)
                     .build(),
                 contentDescription = "Album Cover Art",
                 fallback = painterResource(R.drawable.placeholder),
@@ -273,7 +271,7 @@ fun NowPlayingLandscape(
                     !(metadata?.extras?.getString("navidromeID")?.startsWith("Local_") ?: true)
                 )
                 SleepTimerButton(iconTextColor, 32.dp, sleepTimerMinutes, onOpenSleepTimer)
-                OutputDeviceButton(iconTextColor, 32.dp, onOpenJukebox)
+                OutputDeviceButton(color = iconTextColor, size = 32.dp, onClick = onOpenJukebox)
                 PlayQueueButton(iconTextColor, 32.dp, onToggleQueue)
             }
         }

@@ -1,5 +1,6 @@
 package com.craftworks.music.ui.screens.tv.settings
 
+import com.craftworks.music.managers.settings.rememberMediaProviderSettings
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -55,7 +56,7 @@ fun TvS_ProviderScreen() {
     var showLocalFolderDialog by remember { mutableStateOf(false) }
     var showLrcLibEditDialog by remember { mutableStateOf(false) }
 
-    val lrclibUrl by MediaProviderSettingsManager(context).lrcLibEndpointFlow.collectAsStateWithLifecycle("")
+    val lrclibUrl by rememberMediaProviderSettings().lrcLibEndpointFlow.collectAsStateWithLifecycle("")
 
     Column(
         modifier = Modifier

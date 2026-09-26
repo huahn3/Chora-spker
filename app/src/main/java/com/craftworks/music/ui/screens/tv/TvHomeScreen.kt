@@ -1,5 +1,6 @@
 package com.craftworks.music.ui.screens.tv
 
+import com.craftworks.music.managers.settings.rememberAppearanceSettings
 import android.graphics.drawable.BitmapDrawable
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -102,7 +103,7 @@ fun TvHomeScreen(
     val mostPlayedAlbums by viewModel.mostPlayedAlbums.collectAsStateWithLifecycle()
     val shuffledAlbums by viewModel.shuffledAlbums.collectAsStateWithLifecycle()
 
-    val orderedHomeItems = AppearanceSettingsManager(context).homeItemsItemsFlow.collectAsState(
+    val orderedHomeItems = rememberAppearanceSettings().homeItemsItemsFlow.collectAsState(
         initial = listOf(
             HomeItem("recently_played", true),
             HomeItem("recently_added", true),

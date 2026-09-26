@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?><!--
-   Sample backup rules file; uncomment and customize as necessary.
-   See https://developer.android.com/guide/topics/data/autobackup
-   for details.
-   Note: This file is ignored for devices older that API 31
-   See https://developer.android.com/about/versions/12/backup-restore
+   Exclude the credential store from backup.
+
+   NavidromeManager persists the server list (url, username AND plaintext
+   password) in the "NavidromePrefs" shared preferences file. With the default
+   rules that file was included, so cloud auto-backup / device-to-device
+   transfer / `adb backup` all carried the account credentials off the device.
+
+   Everything else (playlists, settings, DataStore) stays backup-able.
 -->
 <full-backup-content>
-    <!--
-   <include domain="sharedpref" path="."/>
-   <exclude domain="sharedpref" path="device.xml"/>
--->
+    <exclude domain="sharedpref" path="NavidromePrefs.xml" />
 </full-backup-content>

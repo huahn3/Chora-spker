@@ -17,15 +17,41 @@ class SongRepository @Inject constructor(
     private val localDataSource: LocalDataSource,
     private val navidromeDataSource: NavidromeDataSource
 ) {
+    /**
+     * One page of songs plus how many of them came from the remote server.
+     *
+     * The merged list used to be the only output, so callers derived the next
+     * page's `offset` from `items.size` — which silently counted LOCAL songs
+     * against the server cursor (the server then skipped that many tracks) and
+     * broke the "size % 100 == 0" load-more heuristic as soon as a local folder
+     * was enabled.
+     */
+    data class SongsPage(
+        val items: List<MediaItem>,
+        val remoteCount: Int,
+        val requestedRemoteCount: Int
+    ) {
+        val remoteExhausted: Boolean
+            get() = requestedRemoteCount > 0 && remoteCount < requestedRemoteCount
+    }
 
     suspend fun getSongs(
         query: String? = "",
-        songCount: Int = 100, 
+        songCount: Int = 100,
         songOffset: Int = 0,
         ignoreCachedResponse: Boolean = false,
         favoritesOnly: Boolean = false,
-    ): List<MediaItem> = coroutineScope {
+    ): List<MediaItem> = getSongsPage(query, songCount, songOffset, ignoreCachedResponse, favoritesOnly).items
+
+    suspend fun getSongsPage(
+        query: String? = "",
+        songCount: Int = 100,
+        songOffset: Int = 0,
+        ignoreCachedResponse: Boolean = false,
+        favoritesOnly: Boolean = false,
+    ): SongsPage = coroutineScope {
         val deferredSongs = mutableListOf<Deferred<List<MediaItem>>>()
+        var remoteCount = 0
 
         if (LocalProviderManager.checkActiveFolders())
             if (query.isNullOrEmpty() && songOffset == 0)
@@ -34,9 +60,14 @@ class SongRepository @Inject constructor(
         if (NavidromeManager.checkActiveServers())
             deferredSongs.add(async {
                 navidromeDataSource.getNavidromeSongs(query, songCount, songOffset, ignoreCachedResponse, favoritesOnly = favoritesOnly)
+                    .also { remoteCount = it.size }
             })
 
-        deferredSongs.awaitAll().flatten()
+        SongsPage(
+            items = deferredSongs.awaitAll().flatten(),
+            remoteCount = remoteCount,
+            requestedRemoteCount = songCount
+        )
     }
 
     suspend fun setSongRating(

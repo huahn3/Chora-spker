@@ -3,36 +3,25 @@ package com.craftworks.music.ui.playing
 import android.content.Context
 import android.net.Uri
 import android.os.Build
-import android.util.Log
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.toArgb
-import androidx.core.graphics.ColorUtils
-import androidx.core.graphics.drawable.toBitmap
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
-import androidx.palette.graphics.Palette
-import coil.imageLoader
-import coil.request.CachePolicy
-import coil.request.ImageRequest
-import coil.request.SuccessResult
 import com.craftworks.music.data.repository.LyricsRepository
 import com.craftworks.music.data.repository.SongRepository
+import com.craftworks.music.managers.CoverThemeManager
 import com.craftworks.music.managers.settings.AppearanceSettingsManager
 import com.craftworks.music.data.repository.StarredRepository
 import com.craftworks.music.managers.settings.PlaybackSettingsManager
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import jakarta.inject.Inject
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 @HiltViewModel
 class NowPlayingViewModel @Inject constructor (
@@ -46,9 +35,6 @@ class NowPlayingViewModel @Inject constructor (
     private val _isStarred = MutableStateFlow(false)
     val isStarred = _isStarred.asStateFlow()
 
-    private val _lyricsOpen = MutableStateFlow(false)
-    val lyricsOpen = _lyricsOpen.asStateFlow()
-
     private val _playQueueOpen = MutableStateFlow(false)
     val playQueueOpen = _playQueueOpen.asStateFlow()
 
@@ -61,7 +47,6 @@ class NowPlayingViewModel @Inject constructor (
     private val _jukeboxDialogOpen = MutableStateFlow(false)
     val jukeboxDialogOpen = _jukeboxDialogOpen.asStateFlow()
 
-    fun setLyricsOpen(open: Boolean) { _lyricsOpen.value = open }
     fun setPlayQueueOpen(open: Boolean) { _playQueueOpen.value = open }
     fun setDetailsOpen(open: Boolean) { _detailsOpen.value = open }
     fun setSleepTimerDialogOpen(open: Boolean) { _sleepTimerDialogOpen.value = open }
@@ -91,14 +76,39 @@ class NowPlayingViewModel @Inject constructor (
     private val _isBackgroundDark = MutableStateFlow(false)
     val isBackgroundDark = _isBackgroundDark.asStateFlow()
 
-    private val _meta = MutableStateFlow(MediaItem.EMPTY)
-    val metadata = _meta.asStateFlow()
+    private var plainBackground = false
+    private var lastBackgroundStyle: NowPlayingBackground = NowPlayingBackground.STATIC_BLUR
+    private var lastSystemDark = false
 
-    val autoPlay = playbackSettingsManager.autoPlayFlow
-    fun setAutoPlay(autoPlay: Boolean) =
+    // "跟随封面配色" master switch: the theme (dock, surfaces) already falls back
+    // when it is off, so the player background must follow suit or the two drift.
+    private val coverColorEnabled = MutableStateFlow(true)
+
+    init {
         viewModelScope.launch {
-            playbackSettingsManager.setAutoPlay(autoPlay)
+            appearanceSettingsManager.coverThemeFlow.collect { enabled ->
+                coverColorEnabled.value = enabled
+                val cover = CoverThemeManager.state.value
+                val follow = enabled && !plainBackground && cover.colors.isNotEmpty()
+                applyPalette(
+                    colors = if (follow) cover.colors else emptyList(),
+                    isDark = if (follow) cover.isDark else lastSystemDark
+                )
+            }
         }
+        viewModelScope.launch {
+            CoverThemeManager.state.collect { cover ->
+                if (plainBackground || !coverColorEnabled.value || cover.colors.isEmpty()) return@collect
+                applyPalette(cover.colors, cover.isDark)
+            }
+        }
+    }
+
+    private fun applyPalette(colors: List<Color>, isDark: Boolean) {
+        _paletteColors.value = colors
+        _isBackgroundDark.value = isDark
+        _iconTextColor.value = iconColorFor(isDark)
+    }
 
     fun refreshLyrics(mediaMetadata: MediaMetadata?) {
         viewModelScope.launch {
@@ -142,81 +152,41 @@ class NowPlayingViewModel @Inject constructor (
     }
 
     fun updatePaletteFromUri(uri: Uri?, currentBackgroundStyle: NowPlayingBackground, isSystemDark: Boolean) {
-        if (currentBackgroundStyle == NowPlayingBackground.PLAIN) {
-            _paletteColors.value = emptyList()
-            _isBackgroundDark.value = isSystemDark
-            _iconTextColor.value = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                if (_isBackgroundDark.value) dynamicDarkColorScheme(context).onBackground
-                else dynamicLightColorScheme(context).onBackground
-            } else {
-                if (_isBackgroundDark.value) Color.White
-                else Color.Black
-            }
+        lastBackgroundStyle = currentBackgroundStyle
+        updatePaletteFromUri(uri, isSystemDark)
+    }
 
+    /**
+     * Style-agnostic refresh: requests extraction and re-applies the palette
+     * using the last observed background style. Callers must not disagree on the
+     * style — that used to flip [plainBackground] back and forth depending on
+     * which LaunchedEffect ran last.
+     */
+    fun updatePaletteFromUri(uri: Uri?, isSystemDark: Boolean) {
+        lastSystemDark = isSystemDark
+        CoverThemeManager.update(uri?.toString())
+
+        plainBackground = lastBackgroundStyle == NowPlayingBackground.PLAIN
+        if (plainBackground || !coverColorEnabled.value) {
+            applyPalette(emptyList(), isSystemDark)
             return
         }
 
-        if (uri == null) return
-
-        viewModelScope.launch {
-            val palette = extractColorsFromUri(uri.toString(), context)
-            val extractedColors = palette.filterNotNull()
-            _paletteColors.value = extractedColors
-
-            val averageLuminance = extractedColors.map { ColorUtils.calculateLuminance(it.toArgb()) }.average()
-            _isBackgroundDark.value = averageLuminance <= 0.5f
-
-            _iconTextColor.value = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                if (_isBackgroundDark.value) dynamicDarkColorScheme(context).onBackground
-                else dynamicLightColorScheme(context).onBackground
-            } else {
-                if (_isBackgroundDark.value) Color.White
-                else Color.Black
-            }
+        val cover = CoverThemeManager.state.value
+        if (cover.uri == uri?.toString()) {
+            applyPalette(
+                colors = cover.colors,
+                isDark = if (cover.colors.isNotEmpty()) cover.isDark else isSystemDark
+            )
         }
     }
 
-    private suspend fun extractColorsFromUri(uri: String, context: Context): List<Color?> = coroutineScope {
-        val loader = context.imageLoader
-        val request = ImageRequest.Builder(context)
-            .data(uri.replace("size=128", "size=32"))
-            .allowHardware(false)
-            .diskCachePolicy(CachePolicy.DISABLED)
-            .build()
-
-        val result = (loader.execute(request) as? SuccessResult)?.drawable
-        val bitmap = result?.toBitmap()
-
-        bitmap?.let { bitmapImage ->
-            withContext(Dispatchers.Default) {
-                val palette = Palette.Builder(bitmapImage).generate()
-
-                val swatches = mapOf(
-                    "Muted" to palette.mutedSwatch,
-                    "Dark Vibrant" to palette.darkVibrantSwatch,
-                    "Light Vibrant" to palette.lightVibrantSwatch,
-                    "Vibrant" to palette.vibrantSwatch,
-                    "Dominant" to palette.dominantSwatch,
-                    "Light Muted" to palette.lightMutedSwatch
-                )
-
-                // Log the results
-                swatches.forEach { (name, swatch) ->
-                    swatch?.let {
-                        val hex = Integer.toHexString(it.rgb).uppercase()
-                        Log.d("PaletteColor", "$name: #$hex | Body Text Color: ${Integer.toHexString(it.bodyTextColor)}")
-                    }
-                }
-
-                listOf(
-                    palette.vibrantSwatch?.rgb?.let { Color(it) },
-                    palette.darkVibrantSwatch?.rgb?.let { Color(it) },
-                    palette.dominantSwatch?.rgb?.let { Color(it) },
-                    palette.lightVibrantSwatch?.rgb?.let { Color(it) },
-                    palette.mutedSwatch?.rgb?.let { Color(it) },
-                    palette.lightMutedSwatch?.rgb?.let { Color(it) },
-                )
-            }
-        } ?: listOf()
-    }
+    private fun iconColorFor(dark: Boolean): Color =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            if (dark) dynamicDarkColorScheme(context).onBackground
+            else dynamicLightColorScheme(context).onBackground
+        } else {
+            if (dark) Color.White
+            else Color.Black
+        }
 }

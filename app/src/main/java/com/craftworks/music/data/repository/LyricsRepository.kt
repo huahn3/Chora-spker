@@ -15,6 +15,7 @@ import com.craftworks.music.data.model.parseLrc
 import com.craftworks.music.data.model.toLrcString
 import com.craftworks.music.managers.NavidromeManager
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -54,7 +55,28 @@ class LyricsRepository @Inject constructor(
 ) {
     private var lyricsFetchJob: Job? = null
 
+    /**
+     * Degrades a lyrics source to `null` on failure while still propagating
+     * cancellation. Plain `catch (e: Exception)` used to swallow
+     * CancellationException, so a cancelled (track-switched) fetch could keep
+     * running and still write its result.
+     */
+    private suspend inline fun <T> orNullOnFailure(crossinline block: suspend () -> T): T? = try {
+        block()
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        null
+    }
+
     suspend fun getLyrics(metadata: MediaMetadata?, ignoreCachedResponse: Boolean = false) {
+        // Cancel the in-flight fetch FIRST. It used to sit after the radio
+        // early-return, so switching to a radio station left the previous song's
+        // request running, and its late response overwrote the freshly cleared
+        // state with stale lyrics.
+        lyricsFetchJob?.cancel()
+        lyricsFetchJob = null
+
         if (metadata?.mediaType == MediaMetadata.MEDIA_TYPE_RADIO_STATION) {
             LyricsState.lyrics.value = listOf()
             LyricsState.originalLyrics = emptyList()
@@ -65,8 +87,6 @@ class LyricsRepository @Inject constructor(
             LyricsState.currentSongId = null
             return
         }
-
-        lyricsFetchJob?.cancel()
 
         coroutineScope {
             lyricsFetchJob = launch {
@@ -89,6 +109,10 @@ class LyricsRepository @Inject constructor(
                     launch {
                         try {
                             val cached = navidromeNativeApi.getCachedLyricsTranslation(navidromeID)
+                            // The song may have changed while this probe was in
+                            // flight; writing then would attach another song's
+                            // translation to the current lyrics.
+                            if (LyricsState.currentSongId != navidromeID) return@launch
                             if (cached != null && !cached.lines.isNullOrEmpty()) {
                                 val mapped = cached.lines.map { line ->
                                     Lyric(
@@ -126,50 +150,35 @@ class LyricsRepository @Inject constructor(
 
                     val navidromeSyncedDeferred = async {
                         if (NavidromeManager.checkActiveServers() && !isLocal) {
-                            try {
+                            orNullOnFailure {
                                 navidromeDataSource.getNavidromeSyncedLyrics(
                                     metadata?.extras?.getString("navidromeID") ?: "",
                                     ignoreCachedResponse
                                 )
-                            } catch (e: Exception) {
-                                null
                             }
                         } else null
                     }
 
                     val navidromePlainDeferred = async {
                         if (NavidromeManager.checkActiveServers() && !isLocal) {
-                            try {
+                            orNullOnFailure {
                                 navidromeDataSource.getNavidromePlainLyrics(
                                     metadata,
                                     ignoreCachedResponse
                                 )
-                            } catch (e: Exception) {
-                                null
                             }
                         } else null
                     }
 
                     val lrcLibDeferred = async {
                         if (LyricsState.useLrcLib) {
-                            try {
-                                lrclibDataSource.getLrcLibLyrics(
-                                    metadata,
-                                    ignoreCachedResponse
-                                )
-                            } catch (e: Exception) {
-                                null
-                            }
+                            orNullOnFailure { lrclibDataSource.getLrcLibLyrics(metadata, ignoreCachedResponse) }
                         } else null
                     }
 
                     val netEaseDeferred = async {
                         if (LyricsState.useNetEase) {
-                            try {
-                                neteaseDataSource.getNeteaseLyrics(metadata)
-                            } catch (e: Exception) {
-                                null
-                            }
+                            orNullOnFailure { neteaseDataSource.getNeteaseLyrics(metadata) }
                         } else null
                     }
 
@@ -180,11 +189,8 @@ class LyricsRepository @Inject constructor(
 
                     // If all primary sources empty and NetEase was not yet checked, try NetEase fallback
                     if (netEase.isEmpty() && lrcLib.isEmpty() && navidromeSynced.isEmpty() && navidromePlain.isEmpty()) {
-                        netEase = try {
-                            neteaseDataSource.getNeteaseLyrics(metadata)
-                        } catch (_: Exception) {
-                            emptyList()
-                        }
+                        netEase = orNullOnFailure { neteaseDataSource.getNeteaseLyrics(metadata) }
+                            .orEmpty()
                     }
 
                     val resultLyrics = when {
@@ -258,6 +264,9 @@ class LyricsRepository @Inject constructor(
 
         try {
             val response = navidromeNativeApi.translateLyrics(songId, force = false)
+            // Switching tracks mid-request used to let the old song's response
+            // overwrite the new song's lyrics.
+            if (LyricsState.currentSongId != songId) return
             if (response != null && !response.lines.isNullOrEmpty()) {
                 val mapped = response.lines.map { line ->
                     Lyric(
@@ -305,6 +314,7 @@ class LyricsRepository @Inject constructor(
 
         try {
             val response = navidromeNativeApi.translateLyrics(songId, force = true)
+            if (LyricsState.currentSongId != songId) return
             if (response != null && !response.lines.isNullOrEmpty()) {
                 val mapped = response.lines.map { line ->
                     Lyric(

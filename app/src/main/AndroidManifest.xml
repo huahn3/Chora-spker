@@ -51,7 +51,7 @@
             android:theme="@style/Theme.MusicPlayer"
             android:hardwareAccelerated="true"
 
-            android:configChanges="orientation|screenSize"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|density|uiMode|locale|layoutDirection|fontScale|keyboardHidden|navigation"
 
             tools:ignore="LockedOrientationActivity">
             <intent-filter>

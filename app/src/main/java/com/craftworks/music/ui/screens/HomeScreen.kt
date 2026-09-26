@@ -1,5 +1,6 @@
 package com.craftworks.music.ui.screens
 
+import com.craftworks.music.managers.settings.rememberAppearanceSettings
 import android.content.res.Configuration
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
@@ -135,9 +136,9 @@ fun HomeScreen(
                     )
             ) {
                 Row (Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-                    val username = AppearanceSettingsManager(context).usernameFlow.collectAsState("Username")
+                    val username = rememberAppearanceSettings().usernameFlow.collectAsState("Username")
                     val showNavidromeLogo =
-                        AppearanceSettingsManager(context).showNavidromeLogoFlow.collectAsState(true).value && NavidromeManager.checkActiveServers()
+                        rememberAppearanceSettings().showNavidromeLogoFlow.collectAsState(true).value && NavidromeManager.checkActiveServers()
 
                     if (showNavidromeLogo) NavidromeLogo()
 
@@ -283,7 +284,7 @@ fun HomeScreen(
             }
 
 
-            val orderedHomeItems = AppearanceSettingsManager(context).homeItemsItemsFlow.collectAsState(
+            val orderedHomeItems = rememberAppearanceSettings().homeItemsItemsFlow.collectAsState(
                 initial = listOf(
                     HomeItem(
                         "recently_played",

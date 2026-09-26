@@ -125,6 +125,21 @@ class LocalDataSettingsManager @Inject constructor(
         }
     }
 
+    /**
+     * Updates only the resume timestamp. Used by the 1s playback tick so a
+     * process kill mid-song still resumes at the right position, without
+     * re-encoding (and re-writing) the whole playlist to DataStore every 10s.
+     */
+    suspend fun setPlaybackResumptionPosition(currentTime: Long) {
+        try {
+            context.dataStore.edit { preferences ->
+                preferences[MEDIA_RESUMPTION_TIME] = currentTime
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("DATASTORE", "Failed to save resumption position", e)
+        }
+    }
+
     @UnstableApi
     val playbackResumptionPlaylistWithStartPosition: Flow<MediaSession.MediaItemsWithStartPosition> = context.dataStore.data.map { preferences ->
         withContext(NonCancellable) {

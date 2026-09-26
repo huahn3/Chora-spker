@@ -107,7 +107,6 @@ fun PlaylistDetails(
 
     var songToRate by remember { mutableStateOf<MediaItem?>(null) }
 
-    println("artwork uri: ${playlistMetadata?.artworkUri}; artwork data: ${playlistMetadata?.artworkData}")
 
     // Loading spinner
     AnimatedVisibility(
@@ -340,9 +339,6 @@ fun PlaylistDetails(
             }
         }
     }
-
-    if(showAddSongToPlaylistDialog.value)
-        AddSongToPlaylist(setShowDialog =  { showAddSongToPlaylistDialog.value = it } )
 
     songToRate?.let { song ->
         RatingDialog(

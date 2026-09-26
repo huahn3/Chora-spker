@@ -10,6 +10,8 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -19,6 +21,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.PlayArrow
@@ -52,6 +55,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.key.Key
@@ -140,8 +144,14 @@ fun PlaybackProgressSlider(
     var isPlaying by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
-    // Fast-load saved position if mediaController hasn't sought yet on cold start
+    // Fast-load saved position if mediaController hasn't sought yet on cold start.
+    // Guarded so it can only ever fire once per composition: it used to run on
+    // every metadata change, so pausing on a new track snapped the slider to the
+    // PREVIOUS session's saved position.
+    val resumptionInjected = remember { mutableStateOf(false) }
     LaunchedEffect(mediaController, metadata) {
+        if (metadata == null || resumptionInjected.value) return@LaunchedEffect
+        resumptionInjected.value = true
         if (currentValue == 0L) {
             val resumption = LocalDataSettingsManager(context)
                 .playbackResumptionPlaylistWithStartPosition.firstOrNull()
@@ -151,7 +161,10 @@ fun PlaybackProgressSlider(
         }
     }
 
-    LaunchedEffect(mediaController, isPlaying) {
+    // isInteracting MUST be part of the key: without it the loop exited on the
+    // first drag frame and never restarted, freezing the progress bar until the
+    // next play/pause or track change.
+    LaunchedEffect(mediaController, isPlaying, isInteracting) {
         if (mediaController != null && isPlaying) {
             while (isActive && !isInteracting) {
                 currentValue = mediaController.currentPosition
@@ -270,6 +283,11 @@ fun PlaybackProgressSlider(
             onValueChangeFinished = {
                 isInteracting = false
                 mediaController?.seekTo(currentValue)
+                // Resync now instead of waiting up to 1s for the restarted ticker
+                // (onPositionDiscontinuity deliberately ignores SEEK).
+                mediaController?.currentPosition
+                    ?.takeIf { it >= 0L }
+                    ?.let { currentValue = it }
             },
             valueRange = 0f..safeMax,
             colors = SliderDefaults.colors(
@@ -420,6 +438,72 @@ fun LyricsButton(
 }
 
 @OptIn(ExperimentalFoundationApi::class)
+/**
+ * Shared geometry + tint for the five Now Playing action buttons.
+ *
+ * They used to disagree in three ways at once, which is why the row read as
+ * "two bright buttons and three grey ones":
+ *  - touch target: `size + 16.dp` (heart) vs `size + 12.dp` (rest) vs
+ *    `width(size + 12.dp)` with intrinsic height (sleep timer)
+ *  - tint: 0.8f (heart), 0.75f (output device), 0.5f (the rest), plus a
+ *    hard-coded `0xFFFF3B5C` red for a favourited track and `colorScheme.primary`
+ *    whenever a remote output was active
+ *  - press feedback: only the heart lacked `bounceClick()`
+ */
+private val ActionButtonBoxSize = 44.dp
+private val ActionButtonIconSize = 24.dp
+private val CHIP_ICON_SIZE = 26.dp
+private const val ActionButtonAlpha = 0.62f
+private const val ActionButtonDisabledAlpha = 0.28f
+
+/**
+ * Identical container for the five Now Playing action buttons.
+ *
+ * Sizing the `Icon` to the same dp value is not enough: the five glyphs are
+ * different vectors whose ink covers very different fractions of their viewport
+ * (`rounded_phone_24` fills only 58% of its width while
+ * `round_favorite_border_24` fills ~87%), so an equal box still rendered a fat
+ * heart next to a skinny phone. A shared circular plate plus a per-glyph optical
+ * scale is what actually makes the row read as one set.
+ */
+@Composable
+private fun ActionButtonSurface(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    onLongClick: (() -> Unit)? = null,
+    content: @Composable () -> Unit,
+) {
+    val themeDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
+    val plate = when {
+        !enabled -> Color.Transparent
+        themeDark -> Color.White.copy(alpha = 0.07f)
+        else -> Color.Black.copy(alpha = 0.05f)
+    }
+
+    Box(
+        modifier = modifier
+            .size(ActionButtonBoxSize)
+            .clip(CircleShape)
+            .background(plate)
+            .bounceClick(enabled = enabled)
+            .then(
+                if (onLongClick != null) {
+                    Modifier.combinedClickable(
+                        enabled = enabled,
+                        onClick = onClick,
+                        onLongClick = onLongClick
+                    )
+                } else {
+                    Modifier.clickable(enabled = enabled, onClick = onClick)
+                }
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        content()
+    }
+}
+
 @Composable
 fun FavoriteHeartButton(
     color: Color = Color.White,
@@ -432,26 +516,20 @@ fun FavoriteHeartButton(
     val scale = remember { Animatable(1f) }
     val scope = rememberCoroutineScope()
 
-    Box(
-        modifier = Modifier
-            .size(size + 16.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .combinedClickable(
-                onClick = {
-                    scope.launch {
-                        scale.animateTo(0.75f, tween(80))
-                        scale.animateTo(1.25f, spring(dampingRatio = Spring.DampingRatioMediumBouncy))
-                        scale.animateTo(1f, tween(100))
-                    }
-                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                    onClick()
-                },
-                onLongClick = {
-                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                    onLongClick()
-                }
-            ),
-        contentAlignment = Alignment.Center
+    ActionButtonSurface(
+        onClick = {
+            scope.launch {
+                scale.animateTo(0.75f, tween(80))
+                scale.animateTo(1.25f, spring(dampingRatio = Spring.DampingRatioMediumBouncy))
+                scale.animateTo(1f, tween(100))
+            }
+            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+            onClick()
+        },
+        onLongClick = {
+            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+            onLongClick()
+        }
     ) {
         Icon(
             imageVector = ImageVector.vectorResource(
@@ -459,12 +537,20 @@ fun FavoriteHeartButton(
                 else R.drawable.round_favorite_border_24
             ),
             contentDescription = if (isStarred) "Unfavorite" else "Favorite",
-            tint = if (isStarred) Color(0xFFFF3B5C) else color.copy(alpha = 0.8f),
+            tint = color.copy(alpha = ActionButtonAlpha),
             modifier = Modifier
-                .size(size)
+                .size(ActionButtonIconSize)
                 .graphicsLayer {
-                    scaleX = scale.value
-                    scaleY = scale.value
+                    // The heart is the widest glyph of the five, so it is shrunk
+                    // to match the others optically; the favourited state is
+                    // carried by the filled-vs-outline glyph plus a whisper of
+                    // scale, not by a different colour.
+                    // measured 83% x 74% of its 24dp viewport: the widest glyph of
+                    // the five, so it is the reference the others are matched to.
+                    val base = 1f * if (isStarred) 1.05f else 1f
+                    val pulse = scale.value
+                    scaleX = base * pulse
+                    scaleY = base * pulse
                 }
         )
     }
@@ -476,23 +562,21 @@ fun PlayQueueButton(
     size: Dp = 64.dp,
     onClick: () -> Unit = {}
 ){
-    Button(
-        onClick = onClick,
-        shape = RoundedCornerShape(12.dp),
-        contentPadding = PaddingValues(6.dp),
-        modifier = Modifier.bounceClick().size(size + 12.dp),
-        colors = ButtonDefaults.buttonColors(
-            containerColor = Color.Transparent,
-            disabledContainerColor = Color.Transparent,
-            contentColor = color.copy(0.5f),
-            disabledContentColor = color.copy(0.25f)
-        )
-    ) {
+    ActionButtonSurface(onClick = onClick) {
         Icon(
             imageVector = ImageVector.vectorResource(R.drawable.rounded_queue_music_24),
             contentDescription = null,
+            // Without an explicit tint this Icon inherited LocalContentColor and
+            // rendered black while its four neighbours used `color`.
+            tint = color.copy(alpha = ActionButtonAlpha),
             modifier = Modifier
-                .size(size)
+                .size(ActionButtonIconSize)
+                // 79% x 58%: wide and flat, so nudge up to match the others.
+                .graphicsLayer {
+                    val s = 1.06f
+                    scaleX = s
+                    scaleY = s
+                }
         )
     }
 }
@@ -501,6 +585,10 @@ fun PlayQueueButton(
 fun OutputDeviceButton(
     color: Color = Color.Black,
     size: Dp = 32.dp,
+    enabled: Boolean = true,
+    iconAlpha: Float = 0.75f,
+    chip: Boolean = false,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit = {}
 ) {
     val isRemoteActive by JukeboxManager.isRemoteActive.collectAsStateWithLifecycle()
@@ -512,26 +600,55 @@ fun OutputDeviceButton(
         else -> ImageVector.vectorResource(R.drawable.rounded_speaker_24)
     }
 
-    Button(
-        onClick = onClick,
-        shape = RoundedCornerShape(12.dp),
-        modifier = Modifier
-            .bounceClick()
-            .size(size + 12.dp),
-        contentPadding = PaddingValues(6.dp),
-        colors = ButtonDefaults.buttonColors(
-            containerColor = if (isRemoteActive) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
-                            else Color.Transparent,
-            disabledContainerColor = Color.Transparent,
-            contentColor = if (isRemoteActive) MaterialTheme.colorScheme.primary else color.copy(alpha = 0.5f),
-            disabledContentColor = color.copy(alpha = 0.25f)
-        )
-    ) {
+    if (chip) {
+        // The dock's output chip is its own thing (bigger, with a real
+        // "remote is active" background) and is not part of the action row.
+        Button(
+            onClick = onClick,
+            enabled = enabled,
+            shape = CircleShape,
+            modifier = modifier
+                .bounceClick(enabled = enabled)
+                .size(52.dp),
+            contentPadding = PaddingValues(8.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = when {
+                    isRemoteActive -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
+                    else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
+                },
+                disabledContainerColor = Color.Transparent,
+                contentColor = color.copy(alpha = ActionButtonAlpha),
+                disabledContentColor = color.copy(alpha = ActionButtonDisabledAlpha)
+            )
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = "Output Device",
+                modifier = Modifier.size(CHIP_ICON_SIZE),
+                tint = color.copy(alpha = if (isRemoteActive) 1f else ActionButtonAlpha)
+            )
+        }
+        return
+    }
+
+    ActionButtonSurface(onClick = onClick, enabled = enabled) {
         Icon(
             imageVector = icon,
             contentDescription = "Output Device",
-            modifier = Modifier.size(size),
-            tint = if (isRemoteActive) MaterialTheme.colorScheme.primary else color.copy(alpha = 0.75f)
+            modifier = Modifier
+                .size(ActionButtonIconSize)
+                // The phone/speaker glyphs are the narrowest of the five (the
+                // phone fills only ~58% of its viewport width), so they are
+                // scaled up to reach the same optical weight.
+                .graphicsLayer {
+                    // phone = 58% x 92% of its viewport, so at 1.0 it renders a
+                    // 12.7dp-wide sliver next to a 20dp heart. 1.35x brings the ink
+                    // to ~17dp wide, matching the rest.
+                    val s = 1.35f
+                    scaleX = s
+                    scaleY = s
+                },
+            tint = color.copy(alpha = ActionButtonAlpha)
         )
     }
 }
@@ -543,7 +660,7 @@ fun DownloadButton(color: Color, size: Dp, metadata: MediaMetadata?, enabled: Bo
     val coroutineScope = rememberCoroutineScope()
     val context = LocalContext.current
 
-    Button(
+    ActionButtonSurface(
         onClick = {
             coroutineScope.launch {
                 metadata?.let {
@@ -551,28 +668,22 @@ fun DownloadButton(color: Color, size: Dp, metadata: MediaMetadata?, enabled: Bo
                 }
             }
         },
-        enabled = enabled,
-        shape = RoundedCornerShape(12.dp),
-        modifier = if (enabled)
-            Modifier
-                .bounceClick()
-                .size(size + 12.dp)
-        else
-            Modifier
-                .size(size + 12.dp),
-        contentPadding = PaddingValues(6.dp),
-        colors = ButtonDefaults.buttonColors(
-            containerColor = Color.Transparent,
-            disabledContainerColor = Color.Transparent,
-            contentColor = color.copy(alpha = 0.5f),
-            disabledContentColor = color.copy(alpha = 0.25f)
-        )
+        enabled = enabled
     ) {
         Icon(
             imageVector = ImageVector.vectorResource(R.drawable.rounded_download_24),
             contentDescription = "Download Song",
             modifier = Modifier
-                .size(size)
+                .size(ActionButtonIconSize)
+                // The download arrow covers less of its 960-unit viewport than
+                // the others do of their 24-unit ones; nudge it up to match.
+                .graphicsLayer {
+                    // 67% x 67% coverage; 1.12x takes the ink to ~21dp.
+                    val s = 1.12f
+                    scaleX = s
+                    scaleY = s
+                },
+            tint = color.copy(alpha = if (enabled) ActionButtonAlpha else ActionButtonDisabledAlpha)
         )
     }
 }
@@ -598,25 +709,12 @@ fun SleepTimerButton(
             }
         }
     ) {
-        Button(
-            onClick = onClick,
-            shape = RoundedCornerShape(12.dp),
-            modifier = Modifier
-                .bounceClick()
-                .width(size + 12.dp),
-            contentPadding = PaddingValues(6.dp),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = Color.Transparent,
-                disabledContainerColor = Color.Transparent,
-                contentColor = color.copy(alpha = 0.5f),
-                disabledContentColor = color.copy(alpha = 0.25f)
-            )
-        ) {
+        ActionButtonSurface(onClick = onClick) {
             Icon(
                 imageVector = ImageVector.vectorResource(R.drawable.rounded_timer_24),
                 contentDescription = "Sleep timer",
-                modifier = Modifier
-                    .size(size)
+                modifier = Modifier.size(ActionButtonIconSize),
+                tint = color.copy(alpha = ActionButtonAlpha)
             )
         }
     }

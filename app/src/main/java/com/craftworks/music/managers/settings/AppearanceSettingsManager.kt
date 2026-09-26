@@ -2,12 +2,16 @@ package com.craftworks.music.managers.settings
 
 import android.content.Context
 import android.os.Build
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalContext
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.craftworks.music.R
 import com.craftworks.music.data.BottomNavItem
+import com.craftworks.music.data.NavItems
 import com.craftworks.music.dataStore
 import com.craftworks.music.ui.playing.NowPlayingAlignment
 import com.craftworks.music.ui.playing.NowPlayingBackground
@@ -41,6 +45,7 @@ class AppearanceSettingsManager @Inject constructor(
     @ApplicationContext private val context: Context
 ) {
     companion object {
+        private val COVER_THEME = booleanPreferencesKey("cover_theme")
         private val USERNAME_KEY = stringPreferencesKey("username")
         private val NP_BACKGROUND_KEY = stringPreferencesKey("np_background_type")
         private val NP_TITLE_ALIGNMENT = stringPreferencesKey("np_title_alignment")
@@ -160,16 +165,27 @@ class AppearanceSettingsManager @Inject constructor(
         }
     }
 
+    /**
+     * "全局跟随封面配色" master switch. When off, the theme, the ambient wash,
+     * the dock/bottom-bar cover wash AND the Now Playing background all stop
+     * following the cover art — previously the player kept following it while the
+     * dock fell back to the system dynamic color, which looked broken.
+     */
+    val coverThemeFlow: Flow<Boolean> = context.dataStore.data.map { preferences ->
+        preferences[COVER_THEME] ?: true
+    }.distinctUntilChanged()
+
+    suspend fun setCoverTheme(enabled: Boolean) {
+        withContext(NonCancellable) {
+            context.dataStore.edit { preferences ->
+                preferences[COVER_THEME] = enabled
+            }
+        }
+    }
+
     val bottomNavItemsFlow: Flow<List<BottomNavItem>> = context.dataStore.data.map { preferences ->
         val jsonString = preferences[BOTTOM_NAV_ITEMS_KEY]
-        val defaultValue = listOf(
-            BottomNavItem("Home", R.drawable.rounded_home_24, "home_screen"),
-            BottomNavItem("Albums", R.drawable.rounded_library_music_24, "album_screen"),
-            BottomNavItem("Songs", R.drawable.round_music_note_24, "songs_screen"),
-            BottomNavItem("Artists", R.drawable.rounded_artist_24, "artists_screen"),
-            BottomNavItem("Radios", R.drawable.rounded_radio, "radio_screen"),
-            BottomNavItem("Playlists", R.drawable.placeholder, "playlist_screen")
-        )
+        val defaultValue = NavItems.default
         try {
             jsonString?.let { Json.decodeFromString<List<BottomNavItem>>(it) } ?: defaultValue
         } catch (e: Exception) {
@@ -350,4 +366,45 @@ class AppearanceSettingsManager @Inject constructor(
             }
         }
     }
+}
+
+/**
+ * Remembers one [AppearanceSettingsManager] per composition.
+ *
+ * The class is a Hilt `@Singleton`, but composables were calling the
+ * constructor directly (~120 sites). Every recomposition therefore built a new
+ * instance, and because each `val xFlow = dataStore.data.map { ... }` is an
+ * *instance* property, `collectAsState(flow)` got a brand-new Flow key on every
+ * recomposition: it cancelled and restarted the collection, re-read DataStore
+ * and briefly fell back to the `initial` value (visible flicker — the same trap
+ * that caused the "dock disappears" incident, which only ChoraDock fixed).
+ *
+ * Prefer injecting the singleton via Hilt where possible; use this at
+ * composition sites that can't.
+ */
+@Composable
+fun rememberAppearanceSettings(): AppearanceSettingsManager {
+    val context = LocalContext.current.applicationContext
+    return remember(context) { AppearanceSettingsManager(context) }
+}
+
+/** @see rememberAppearanceSettings */
+@Composable
+fun rememberPlaybackSettings(): PlaybackSettingsManager {
+    val context = LocalContext.current.applicationContext
+    return remember(context) { PlaybackSettingsManager(context) }
+}
+
+/** @see rememberAppearanceSettings */
+@Composable
+fun rememberMediaProviderSettings(): MediaProviderSettingsManager {
+    val context = LocalContext.current.applicationContext
+    return remember(context) { MediaProviderSettingsManager(context) }
+}
+
+/** @see rememberAppearanceSettings */
+@Composable
+fun rememberLocalDataSettings(): LocalDataSettingsManager {
+    val context = LocalContext.current.applicationContext
+    return remember(context) { LocalDataSettingsManager(context) }
 }

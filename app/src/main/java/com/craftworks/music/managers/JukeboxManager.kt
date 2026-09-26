@@ -24,7 +24,7 @@ object JukeboxManager {
     private val scope = CoroutineScope(Dispatchers.IO)
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    private val defaultBrowserDevice = JukeboxDevice("browser", "本机播放", "browser")
+    private val defaultBrowserDevice = JukeboxDevice("browser", "本机", "browser")
 
     private val _devices = MutableStateFlow<List<JukeboxDevice>>(listOf(defaultBrowserDevice))
     val devices: StateFlow<List<JukeboxDevice>> = _devices.asStateFlow()
@@ -62,15 +62,19 @@ object JukeboxManager {
             try {
                 val resp = nativeApi.getJukeboxDevices()
                 if (resp != null) {
-                    val list = if (resp.devices.none { it.id == "browser" }) {
-                        listOf(defaultBrowserDevice) + resp.devices
-                    } else {
-                        resp.devices
+                    // Server may report a different casing/name for the local browser device; normalize it
+                    val list = resp.devices.map {
+                        if (it.id == "browser") it.copy(name = "本机", type = "browser") else it
                     }
-                    _devices.value = list
+                    val finalList = if (list.none { it.id == "browser" }) {
+                        listOf(defaultBrowserDevice) + list
+                    } else {
+                        list
+                    }
+                    _devices.value = finalList
                     val selectedId = resp.selected.ifBlank { "browser" }
                     _selectedDeviceId.value = selectedId
-                    _selectedDevice.value = list.find { it.id == selectedId } ?: defaultBrowserDevice
+                    _selectedDevice.value = finalList.find { it.id == selectedId } ?: defaultBrowserDevice
                     _isRemoteActive.value = (selectedId != "browser")
 
                     if (_isRemoteActive.value) {

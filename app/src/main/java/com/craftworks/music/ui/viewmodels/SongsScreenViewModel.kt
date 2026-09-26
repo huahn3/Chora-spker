@@ -51,15 +51,26 @@ class SongsScreenViewModel @Inject constructor(
         }
     }
 
+    // Cursor into the REMOTE list only. Using the merged list size skipped
+    // `localCount` server tracks on every page once a local folder was enabled.
+    private var remoteSongCount = 0
+    private val _canLoadMore = MutableStateFlow(false)
+    val canLoadMore: StateFlow<Boolean> = _canLoadMore.asStateFlow()
+
     private var getSongsJob: Job? = null
     fun getSongs() {
         getSongsJob?.cancel()
         getSongsJob = viewModelScope.launch {
             _isLoading.value = true
             try {
-                coroutineScope {
-                    _allSongs.value = songRepository.getSongs(ignoreCachedResponse = true, favoritesOnly = _showFavoritesOnly.value)
-                }
+                val page = songRepository.getSongsPage(
+                    songCount = PAGE_SIZE,
+                    ignoreCachedResponse = true,
+                    favoritesOnly = _showFavoritesOnly.value
+                )
+                remoteSongCount = page.remoteCount
+                _canLoadMore.value = !page.remoteExhausted
+                _allSongs.value = page.items
             } finally {
                 _isLoading.value = false
             }
@@ -67,25 +78,28 @@ class SongsScreenViewModel @Inject constructor(
     }
 
     private var isFetchingMore = false
-    fun getMoreSongs(size: Int){
+    fun getMoreSongs(size: Int = PAGE_SIZE){
         if (isFetchingMore) return
         viewModelScope.launch {
             isFetchingMore = true
             try {
-                coroutineScope {
-                    val songOffset = _allSongs.value.size
-                    val newSongs = songRepository.getSongs(songCount = size, songOffset = songOffset, favoritesOnly = _showFavoritesOnly.value)
-                    if (newSongs.isNotEmpty()) {
-                        val currentIds = _allSongs.value.mapTo(HashSet()) {
-                            it.mediaMetadata.extras?.getString("navidromeID") ?: it.mediaId
-                        }
-                        val distinctNew = newSongs.filter {
-                            val id = it.mediaMetadata.extras?.getString("navidromeID") ?: it.mediaId
-                            !currentIds.contains(id)
-                        }
-                        if (distinctNew.isNotEmpty()) {
-                            _allSongs.value += distinctNew
-                        }
+                val page = songRepository.getSongsPage(
+                    songCount = size,
+                    songOffset = remoteSongCount,
+                    favoritesOnly = _showFavoritesOnly.value
+                )
+                remoteSongCount += page.remoteCount
+                _canLoadMore.value = !page.remoteExhausted
+                if (page.items.isNotEmpty()) {
+                    val currentIds = _allSongs.value.mapTo(HashSet()) {
+                        it.mediaMetadata.extras?.getString("navidromeID") ?: it.mediaId
+                    }
+                    val distinctNew = page.items.filter {
+                        val id = it.mediaMetadata.extras?.getString("navidromeID") ?: it.mediaId
+                        !currentIds.contains(id)
+                    }
+                    if (distinctNew.isNotEmpty()) {
+                        _allSongs.value += distinctNew
                     }
                 }
             } finally {
@@ -141,5 +155,9 @@ class SongsScreenViewModel @Inject constructor(
         viewModelScope.launch {
             songRepository.setSongRating(songId, rating)
         }
+    }
+
+    companion object {
+        private const val PAGE_SIZE = 100
     }
 }

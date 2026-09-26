@@ -2,6 +2,7 @@
 
 package com.craftworks.music.ui.playing.tv
 
+import com.craftworks.music.managers.settings.rememberAppearanceSettings
 import android.view.KeyEvent
 import androidx.annotation.OptIn
 import androidx.compose.animation.AnimatedVisibility
@@ -68,7 +69,6 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.StandardCardContainer
 import androidx.tv.material3.Text
 import coil.compose.AsyncImage
-import coil.request.CachePolicy
 import coil.request.ImageRequest
 import com.craftworks.music.R
 import com.craftworks.music.data.repository.LyricsState
@@ -100,7 +100,7 @@ fun TvNowPlaying(
     // Auto-hide after 5 seconds of visibility
     val interactionFlow = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 1) }
 
-    val oledProtectionMode by AppearanceSettingsManager(LocalContext.current).oledProtectionMode.collectAsStateWithLifecycle(
+    val oledProtectionMode by rememberAppearanceSettings().oledProtectionMode.collectAsStateWithLifecycle(
         OLEDProtectionMode.OFF
     )
 
@@ -199,7 +199,6 @@ fun TvNowPlaying(
                                             metadata?.artworkUri.toString()
                                                 .replace("size=128", "size=500")
                                         )
-                                        .diskCachePolicy(CachePolicy.DISABLED)
                                         .placeholderMemoryCacheKey(metadata?.artworkUri.toString())
                                         .crossfade(true)
                                         .build(),

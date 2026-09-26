@@ -65,7 +65,6 @@ import com.craftworks.music.providers.navidrome.getNavidromeStatus
 import com.craftworks.music.providers.navidrome.navidromeStatus
 import com.craftworks.music.ui.elements.bounceClick
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 
 //region PREVIEWS
 @Preview(showBackground = true, device = "id:tv_1080p")
@@ -95,6 +94,7 @@ fun EditLrcLibUrlDialog(
     context: Context = LocalContext.current
 ) {
     val settingsManager = remember { MediaProviderSettingsManager(context) }
+    val coroutineScope = rememberCoroutineScope()
 
     var url by remember { mutableStateOf("https://lrclib.net") }
 
@@ -138,7 +138,7 @@ fun EditLrcLibUrlDialog(
             Button(
                 onClick = {
                     if (isValidUrl)
-                        runBlocking {
+                        coroutineScope.launch {
                             MediaProviderSettingsManager(context).setLrcLibEndpoint(url)
                         }
 

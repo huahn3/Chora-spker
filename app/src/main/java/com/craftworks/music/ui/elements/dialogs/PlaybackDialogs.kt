@@ -12,6 +12,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -29,7 +30,7 @@ import androidx.compose.ui.window.Dialog
 import com.craftworks.music.R
 import com.craftworks.music.managers.settings.PlaybackSettingsManager
 import com.craftworks.music.ui.elements.bounceClick
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.launch
 
 
 //region PREVIEWS
@@ -52,6 +53,7 @@ fun TranscodingBitrateDialog(
     isWifiDialog: Boolean = true
 ) {
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
 
     val transcodingBitrateWifi by PlaybackSettingsManager(context).wifiTranscodingBitrateFlow.collectAsState("")
     val transcodingBitrateData by PlaybackSettingsManager(context).mobileDataTranscodingBitrateFlow.collectAsState("")
@@ -94,7 +96,7 @@ fun TranscodingBitrateDialog(
                             else
                                 bitrate == transcodingBitrateData,
                             onClick = {
-                                runBlocking {
+                                coroutineScope.launch {
                                     if (isWifiDialog)
                                         PlaybackSettingsManager(context).setWifiTranscodingBitrate(bitrate)
                                     else
@@ -111,7 +113,7 @@ fun TranscodingBitrateDialog(
                         else
                             bitrate == transcodingBitrateData,
                         onClick = {
-                            runBlocking {
+                            coroutineScope.launch {
                                 if (isWifiDialog)
                                     PlaybackSettingsManager(context).setWifiTranscodingBitrate(bitrate)
                                 else
@@ -140,6 +142,7 @@ fun TranscodingFormatDialog(
     setShowDialog: (Boolean) -> Unit
 ) {
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
 
     val transcodingFormat by PlaybackSettingsManager(context).transcodingFormatFlow.collectAsState("")
 
@@ -174,7 +177,7 @@ fun TranscodingFormatDialog(
                         .selectable(
                             selected = format == transcodingFormat,
                             onClick = {
-                                runBlocking {
+                                coroutineScope.launch {
                                     PlaybackSettingsManager(context).setTranscodingFormat(format)
                                 }
                                 setShowDialog(false)
@@ -185,7 +188,7 @@ fun TranscodingFormatDialog(
                     RadioButton(
                         selected = format == transcodingFormat,
                         onClick = {
-                            runBlocking {
+                            coroutineScope.launch {
                                 PlaybackSettingsManager(context).setTranscodingFormat(format)
                             }
                             setShowDialog(false)

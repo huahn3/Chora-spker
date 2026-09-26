@@ -192,3 +192,71 @@ Navidrome 扩展功能（Jukebox 多输出设备与歌词翻译）通过服务�
 ### 6.4 歌词翻译小圆点不亮或无法获取翻译
 1. **原因 1（无缓存 404）**：新歌曲首次播放时无缓存属正常现象，点击「译」即可触发服务端实时翻译。
 2. **原因 2（服务端未配置 API Key）**：Navidrome 服务端未配置翻译引擎（OpenAI/Gemini/DeepSeek）密钥，服务端返回 `HTTP 400 (translation API key not configured)`。
+
+---
+
+## 7. 全屏播放页手势层架构 (Animatable Overlay，2026-09-26 重构)
+
+### 7.1 背景：为什么删除 BottomSheetScaffold
+- material3 `1.5.0-alpha21` 的 `SheetState` 内部 `animatable` 为 private，**无法程序化拖拽**；
+- 快速甩动时 `currentValue/targetValue` 会失同步（desync），`partialExpand()` 在失同步状态下挂死；
+- 因此非 TV 分支整体替换为**自定义跟手覆盖层**，`BottomSheetScaffold` / `scaffoldState` / `SheetValue` 已全部移除。
+
+### 7.2 单一数据源：playerOffset
+`MainActivity` 非 TV 分支持有唯一 Animatable：
+
+```kotlin
+val playerOffset = remember { Animatable(0f) }   // 0f = 停在屏幕下方, 1f = 全屏展开
+val isPlayerExpanded by derivedStateOf { playerOffset.value >= 0.5f }
+internal val PlayerSettleSpec = spring<Float>(
+    dampingRatio = Spring.DampingRatioNoBouncy, stiffness = 900f
+)   // 定义于 MainActivity.kt 文件尾部，ChoraDock 共享 import
+```
+
+同一个数值刚性驱动三层视图（全部在 `graphicsLayer {}` / `offset {}` lambda 内读取，**零重组**）：
+
+| 视图 | 变换 | 效果 |
+| :--- | :--- | :--- |
+| 播放页覆盖层 Box | `translationY=(1-o)*h`, `scale=0.92+0.08o`, `alpha=0.75+0.25o`, `clip+RoundedCornerShape((1-o)*48dp)` | 圆角卡片"展开摊平"进入全屏 (unfurl) |
+| 首页 Scaffold | `scale=1-0.05o`, `alpha=1-0.35o` | 后退景深感 |
+| ChoraDock Column | `offset y = o*dockHeightPx`, `alpha=(1-2.5o)` | 同步滑出并提前淡出 |
+
+### 7.3 手势清单
+| 位置 | 手势 | 结算规则 |
+| :--- | :--- | :--- |
+| dock 封面行 | 竖滑跟手展开 / 横滑切歌（双轴 `detectDragGestures` + 轴锁定：\|cumDx\|>10dp 且横向占优→横） | 甩速 ±700px/s 优先，否则位置阈值（展开 0.4 / 切歌 18% 行宽） |
+| 播放页封面/标题/控制区 | 竖滑跟手收起（父 Box `detectVerticalDragGestures`） | 同上，位置阈值 0.55 |
+| 歌词 LazyColumn | 下滑到顶后溢出量经 `NestedScrollConnection.onPostScroll` 链回 playerOffset → 跟手收起；未到顶只滚列表（"越往下越拖不动"）；`onPostFling` 结算 | 同播放页 |
+| 播放页标题/艺人块 | 横滑切歌（`detectHorizontalDragGestures`，父级竖拖不冲突） | 阈值同 dock |
+| dock 导航图标 | 展开态点击 → `animateTo(0f)` 收起 | — |
+| 系统返回键 | 双层 BackHandler（铁律 4）不变，收起改为 `playerOffset.animateTo(0f, PlayerSettleSpec)` | — |
+
+### 7.4 切歌文字动效约定
+- **横滑只动中间文字块**（封面与输出按钮不动）：`swipeX: Animatable` 由 ChoraDock 手势驱动、以 `dragX` 参数传入 `NowPlayingMiniPlayer`，文字列 `graphicsLayer { translationX = dragX*0.45; alpha 随拉距淡出 }`。
+- 切歌方向经 `swipeDir`(-1=左滑下一曲 / +1=右滑上一曲) 传入 `AnimatedContent` transitionSpec。
+- **dock（居中文字）**：新歌词从滑动**对侧**滑入；**播放页（左对齐文字）**：进场方向**镜像**，新歌名从手指来向滑入。
+- mini player 右侧输出设备 chip 固定 **52dp**（与左侧封面圆环同尺寸），图标 26dp。
+
+### 7.5 弹窗延迟根因与作用域隔离
+输出设备/播放队列弹窗曾延迟 ~2s：开关状态在 Activity 顶层 collect → 每次开合重组整个 Scaffold+NavGraph。现由 `MainActivity.kt` 文件尾部的 `PlayQueueSheetHost` / `JukeboxSheetHost` 私有 Composable **在自身作用域内 collectAsStateWithLifecycle**，开合只重组最小子树（实测弹窗首帧 30–80ms）。
+
+### 7.6 封面主题取色：dock 与播放页统一走 CoverWash
+- **取色单一真源**：`CoverThemeManager`（key = artworkUri，32px 缩略图 + Palette），播放页背景、dock 卡片、宽屏底栏、全局主题共用同一份 `palette[0..5]`，不一致只可能出在消费端。
+- **绘制统一走 `ui/theme/CoverWash.kt`**：`rememberCoverWash()` 逐色 `animateColorAsState(tween 1500ms)`（与播放页历史行为一致，保证切歌时两边同步渐变）+ `Modifier.coverWash(colors, layout, base, overlay)`（base 底 + 4 团 `radialGradient` 原色 + overlay）。
+  - `FULLSCREEN`：几何与原 `StaticBlur` 逐像素一致（中心 `(1.1w,0.1h)/(0.2w,h)/(0.05w,h/2)/(w,0.9h)`，半径 `2w/h/h/h`），播放页专用。
+  - `COMPACT`：中心点同组比例，半径改按卡片宽度缩放（`w / 0.8w / 0.7w / 0.85w`），供 `ChoraDock` 卡片与宽屏 `AnimatedBottomNavBar` 使用，避免矮卡片被第一团色吃满；`overlay` scrim 暗色 `Black@0.18` / 亮色 `White@0.22`，保证 mini player 文字与导航图标可读。
+- **dock 不再经 HSL 重映射**：卡片背景直接用原色光斑，仅在关闭「跟随封面配色」或无封面时回落 `surfaceContainerHigh → surfaceContainer` 渐变兜底。
+- **门禁统一**：`coverThemeFlow`（设置→外观）关闭时，`Theme.kt` 主题、`CoverAmbientBackground`、dock/底栏 wash、播放页 `_paletteColors` 全部同时回落，消除「dock 系统动态色 + 播放页仍跟封面」的割裂。
+- **palette 刷新只允许一个写入方决定 plainBackground**：`NowPlayingViewModel.updatePaletteFromUri(uri, style, dark)` 记录 style，`MainActivity` 走无 style 重载，避免两个 `LaunchedEffect` 硬编码不同 style 互相翻转。
+- `neutralSat = (sat * 0.55f).coerceIn(0.14f, 0.34f)` 仍作用于 `buildCoverColorScheme` 的 surface/弹窗/兜底路径，使其带封面色相而不近灰；但它已不是 dock 观感的决定因素。
+
+---
+
+## 8. 本 Compose 版本 (2.x + material3 1.5.0-alpha21) API 避坑清单
+
+1. `detectVerticalDragGestures` 的 `onDragEnd: () -> Unit` **没有速度参数** → 需手动 EMA 估算速度：`vel = vel*0.6 + (dragAmount/dt*1000)*0.4`。
+2. `androidx.compose.ui.unit.Velocity` 的 `.y` 是 **Float**，不是动画值，没有 `.value`。
+3. `GraphicsLayerScope` 无 `cornerRadius`/`roundRadius` → 圆角用 `clip = true; shape = RoundedCornerShape(px.dp)`（scope 自带 Density，可 `dp.toPx()`）。
+4. `PointerInputScope.touchSlop` 不可直接引用 → 用固定 dp 换算（如 10dp）代替。
+5. `LocalConfiguration.current` **不能在 `remember {}` lambda 里调用**（非 Composable 上下文）→ 先在外层取值再捕获。
+6. material3 `SheetState.currentValue/targetValue` 在甩动下会说谎；如需状态判断优先 `requireOffset()`（本项目已整体弃用 Sheet）。

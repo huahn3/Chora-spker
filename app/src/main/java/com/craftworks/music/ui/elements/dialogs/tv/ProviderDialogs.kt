@@ -1,5 +1,7 @@
 package com.craftworks.music.ui.elements.dialogs.tv
 
+import android.util.Log
+
 import android.content.res.Configuration
 import android.os.Environment
 import androidx.activity.compose.BackHandler
@@ -461,7 +463,7 @@ fun CreateLocalProviderDialog(
             val parentDir = currentDir.parentFile?.takeIf { it.canRead() }
             if (parentDir != null) {
                 currentDir = parentDir
-                println("parentDir: $parentDir")
+                Log.d("PROVIDER_DIALOG", "parentDir: $parentDir")
             }
             else {
                 setShowDialog(false)

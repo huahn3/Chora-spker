@@ -50,7 +50,7 @@ import com.craftworks.music.managers.NavidromeManager
 import com.craftworks.music.managers.settings.AppearanceSettingsManager
 import com.craftworks.music.managers.settings.MediaProviderSettingsManager
 import com.craftworks.music.ui.elements.dialogs.EditLrcLibUrlDialog
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.launch
 
 @Preview
 @Composable
@@ -137,7 +137,7 @@ fun NavidromeProviderCard(
         allowSelfSignedCert = true
     )
 ) {
-    rememberCoroutineScope()
+    val coroutineScope = rememberCoroutineScope()
 
     Row(modifier = Modifier
         .padding(bottom = 12.dp)
@@ -181,7 +181,7 @@ fun NavidromeProviderCard(
                     NavidromeManager.setCurrentServer(null)
                 else
                     NavidromeManager.setCurrentServer(server.id)
-                runBlocking {
+                coroutineScope.launch {
                     AppearanceSettingsManager(context).setUsername(server.username)
                 }
                 Log.d("NAVIDROME", "Navidrome Current Server: ${server.id}")
@@ -216,6 +216,7 @@ fun NavidromeProviderCard(
 fun LRCLIBProviderCard(
     context: Context = LocalContext.current
 ){
+    val coroutineScope = rememberCoroutineScope()
     var showEditDialog by remember { mutableStateOf(false) }
     Row(modifier = Modifier
         .padding(bottom = 12.dp)
@@ -252,7 +253,7 @@ fun LRCLIBProviderCard(
             checked = LyricsState.useLrcLib,
             onCheckedChange = {
                 LyricsState.useLrcLib = it
-                runBlocking {
+                coroutineScope.launch {
                     MediaProviderSettingsManager(context).setUseLrcLib(it)
                 }
             }
@@ -289,6 +290,7 @@ fun LRCLIBProviderCard(
 fun NetEaseProviderCard(
     context: Context = LocalContext.current
 ){
+    val coroutineScope = rememberCoroutineScope()
     var showEditDialog by remember { mutableStateOf(false) }
     Row(modifier = Modifier
         .padding(bottom = 12.dp)
@@ -325,7 +327,7 @@ fun NetEaseProviderCard(
             checked = LyricsState.useNetEase,
             onCheckedChange = {
                 LyricsState.useNetEase = it
-                runBlocking {
+                coroutineScope.launch {
                     MediaProviderSettingsManager(context).setUseNetEase(it)
                 }
             }

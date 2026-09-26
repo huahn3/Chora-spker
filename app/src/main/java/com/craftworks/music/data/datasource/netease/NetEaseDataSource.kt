@@ -1,5 +1,6 @@
 package com.craftworks.music.data.datasource.netease
 
+import com.craftworks.music.data.datasource.installHttpDefaults
 import android.content.Context
 import android.util.Log
 import androidx.media3.common.MediaMetadata
@@ -13,10 +14,6 @@ import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.cache.HttpCache
 import io.ktor.client.plugins.cache.storage.FileStorage
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
-import io.ktor.client.plugins.logging.LogLevel
-import io.ktor.client.plugins.logging.Logger
-import io.ktor.client.plugins.logging.Logging
-import io.ktor.client.plugins.logging.SIMPLE
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.parameter
@@ -64,10 +61,7 @@ class NeteaseDataSource @Inject constructor(
                 isLenient = true
             })
         }
-        install(Logging) {
-            level = LogLevel.INFO
-            logger = Logger.SIMPLE
-        }
+        installHttpDefaults()
         install(HttpCache) {
             val cacheDir = File(context.cacheDir, "netease_http_cache")
             if (!cacheDir.exists()) cacheDir.mkdirs()

@@ -1,5 +1,6 @@
 package com.craftworks.music.ui.screens.tv
 
+import com.craftworks.music.managers.settings.rememberAppearanceSettings
 import android.net.Uri
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -86,8 +87,7 @@ fun TvAlbumDetails(
 ) {
     val context = LocalContext.current
     val currentAlbum = viewModel.songsInAlbum.collectAsStateWithLifecycle().value
-    val showTrackNumbers by AppearanceSettingsManager(context)
-        .showTrackNumbersFlow.collectAsStateWithLifecycle(false)
+    val showTrackNumbers by rememberAppearanceSettings().showTrackNumbersFlow.collectAsStateWithLifecycle(false)
 
     var selectedSong by remember { mutableStateOf(MediaItem.EMPTY) }
     var showSongDialog by remember { mutableStateOf(false) }

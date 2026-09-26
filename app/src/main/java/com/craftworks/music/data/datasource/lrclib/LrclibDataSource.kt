@@ -1,5 +1,6 @@
 package com.craftworks.music.data.datasource.lrclib
 
+import com.craftworks.music.data.datasource.installHttpDefaults
 import android.content.Context
 import android.util.Log
 import androidx.media3.common.MediaMetadata
@@ -15,10 +16,6 @@ import io.ktor.client.plugins.ClientRequestException
 import io.ktor.client.plugins.cache.HttpCache
 import io.ktor.client.plugins.cache.storage.FileStorage
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
-import io.ktor.client.plugins.logging.LogLevel
-import io.ktor.client.plugins.logging.Logger
-import io.ktor.client.plugins.logging.Logging
-import io.ktor.client.plugins.logging.SIMPLE
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.parameter
@@ -57,10 +54,7 @@ class LrclibDataSource @Inject constructor(
             publicStorage(FileStorage(cacheDir))
         }
 
-        install(Logging) {
-            level = LogLevel.INFO
-            logger = Logger.SIMPLE
-        }
+        installHttpDefaults()
 
         expectSuccess = true
     }

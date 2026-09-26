@@ -151,6 +151,11 @@ fun PlayQueueContent(
             currentList.addAll(
                 List(mediaController.mediaItemCount) { i -> mediaController.getMediaItemAt(i) }
             )
+            // A timeline change (track switch, transcoding config swap) rebuilds
+            // the list, which invalidates the indices captured by an in-flight
+            // drag; committing them afterwards moved the wrong row.
+            dragStartIndex = -1
+            dragCurrentIndex = -1
         }
 
         val listener = object : Player.Listener {
@@ -199,10 +204,10 @@ fun PlayQueueContent(
         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        itemsIndexed(currentList, key = { _, item -> item.mediaId }) { index, item ->
+        itemsIndexed(currentList, key = { index, item -> stableQueueKey(index, item) }) { index, item ->
             ReorderableItem(
                 state = reorderableState,
-                key = item.mediaId,
+                key = stableQueueKey(index, item),
                 animateItemModifier = Modifier.animateItem(
                     placementSpec = spring(Spring.DampingRatioLowBouncy, Spring.StiffnessLow)
                 )
@@ -307,3 +312,11 @@ fun PlayQueueContent(
         }
     }
 }
+/**
+ * Queue rows can legitimately repeat the same `mediaId` (the same track added to
+ * the queue twice — album/song/playlist screens call `addMediaItem` freely, and
+ * the same local+Navidrome id pair repeats). A bare `mediaId` key crashed /
+ * misplaced rows, so the index is folded in: uniqueness comes for free, and the
+ * index is part of the key only while duplicates exist.
+ */
+private fun stableQueueKey(index: Int, item: MediaItem): String = "$index:${item.mediaId}"

@@ -1,5 +1,6 @@
 package com.craftworks.music.ui.screens.settings
 
+import com.craftworks.music.managers.settings.rememberPlaybackSettings
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -47,7 +48,7 @@ import com.craftworks.music.managers.settings.PlaybackSettingsManager
 import com.craftworks.music.ui.elements.dialogs.TranscodingBitrateDialog
 import com.craftworks.music.ui.elements.dialogs.TranscodingFormatDialog
 import com.craftworks.music.ui.elements.dialogs.dialogFocusable
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 @Preview(showSystemUi = false, showBackground = true)
@@ -113,7 +114,7 @@ fun S_PlaybackScreen(navHostController: NavHostController = rememberNavControlle
                     verticalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
                     val transcodingBitrateWifi =
-                        PlaybackSettingsManager(context).wifiTranscodingBitrateFlow.collectAsState("").value
+                        rememberPlaybackSettings().wifiTranscodingBitrateFlow.collectAsState("").value
 
                     SettingsDialogButton(
                         settingsName = stringResource(R.string.Setting_Transcoding_Wifi),
@@ -125,7 +126,7 @@ fun S_PlaybackScreen(navHostController: NavHostController = rememberNavControlle
 
 
                     val transcodingBitrateData =
-                        PlaybackSettingsManager(context).mobileDataTranscodingBitrateFlow.collectAsState(
+                        rememberPlaybackSettings().mobileDataTranscodingBitrateFlow.collectAsState(
                             ""
                         ).value
 
@@ -138,7 +139,7 @@ fun S_PlaybackScreen(navHostController: NavHostController = rememberNavControlle
                     )
 
                     val transcodingFormat =
-                        PlaybackSettingsManager(context).transcodingFormatFlow.collectAsState("opus").value
+                        rememberPlaybackSettings().transcodingFormatFlow.collectAsState("opus").value
 
                     val transcodingFormatEnabled =
                         (transcodingBitrateData != "No Transcoding" || transcodingBitrateWifi != "No Transcoding") && currentNavidromeServer != null
@@ -157,7 +158,7 @@ fun S_PlaybackScreen(navHostController: NavHostController = rememberNavControlle
                     modifier = Modifier.clip(RoundedCornerShape(16.dp)),
                     verticalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
-                    val autoPlay by PlaybackSettingsManager(context).autoPlayFlow.collectAsStateWithLifecycle(true)
+                    val autoPlay by rememberPlaybackSettings().autoPlayFlow.collectAsStateWithLifecycle(true)
                     SettingsSwitch(
                         autoPlay,
                         stringResource(R.string.Setting_LyricsAutoscroll),
@@ -177,7 +178,7 @@ fun S_PlaybackScreen(navHostController: NavHostController = rememberNavControlle
                     verticalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
                     val sliderValue =
-                        PlaybackSettingsManager(context).scrobblePercentFlow.collectAsState(7)
+                        rememberPlaybackSettings().scrobblePercentFlow.collectAsState(7)
 
                     SettingsSlider(
                         settingsName = stringResource(R.string.Setting_Scrobble_Percent),
@@ -185,7 +186,7 @@ fun S_PlaybackScreen(navHostController: NavHostController = rememberNavControlle
                         steps = 8,
                         minValue = 1f, maxValue = 10f,
                         onValueChange = {
-                            runBlocking {
+                            coroutineScope.launch {
                                 PlaybackSettingsManager(context).setScrobblePercent(it.roundToInt())
                             }
                         }

@@ -1,5 +1,7 @@
 package com.craftworks.music.ui.elements.dialogs
 
+import android.util.Log
+
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -135,8 +137,7 @@ fun AddSongToPlaylist(
                             .fadingEdge(listFadingEdge)
                             .verticalScroll(rememberScrollState())
                     ) {
-                        println("there are ${playlists.size} playlists")
-
+                        Log.d("PLAYLIST_DIALOG", "there are ${playlists.size} playlists")
                         for (playlist in playlists) {
                             // Allow ONLY adding local songs to local playlists and navidrome songs to navidrome playlists.
                             val disabled = songToAddToPlaylist.value.mediaMetadata.extras?.getString("navidromeID")?.startsWith("Local_") == true xor

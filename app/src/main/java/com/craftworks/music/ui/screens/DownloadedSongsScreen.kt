@@ -269,7 +269,7 @@ fun DownloadedSongsScreen(
                 )
             )
         },
-        containerColor = MaterialTheme.colorScheme.background
+        containerColor = Color.Transparent // let the app-wide cover wash through, like Home does
     ) { paddingValues ->
         PullToRefreshBox(
             isRefreshing = isLoading,

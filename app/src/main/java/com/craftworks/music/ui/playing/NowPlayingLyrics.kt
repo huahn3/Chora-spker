@@ -74,6 +74,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.ui.draw.clip
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.collectAsState
@@ -107,13 +108,11 @@ import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import com.craftworks.music.data.model.Lyric
 import com.craftworks.music.data.repository.LyricsState
-import com.craftworks.music.managers.settings.AppearanceSettingsManager
+import com.craftworks.music.managers.settings.rememberAppearanceSettings
 import com.gigamole.composefadingedges.FadingEdgesGravity
 import com.gigamole.composefadingedges.content.FadingEdgesContentType
 import com.gigamole.composefadingedges.content.scrollconfig.FadingEdgesScrollConfig
 import com.gigamole.composefadingedges.verticalFadingEdges
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -138,7 +137,10 @@ fun LyricsView(
     val loading by LyricsState.loading.collectAsStateWithLifecycle()
     var isRefreshing by remember { mutableStateOf(false) }
 
-    val appearanceSettingsManager = AppearanceSettingsManager(LocalContext.current)
+    // Remembered: an unremembered instance rebuilt all five DataStore flows on
+    // every recomposition (the position ticker alone recomposes this every few
+    // hundred ms), restarting each collection and dropping back to `initial`.
+    val appearanceSettingsManager = rememberAppearanceSettings()
 
     val useBlur by appearanceSettingsManager.nowPlayingLyricsBlurFlow.collectAsState(
         true
@@ -213,43 +215,33 @@ fun LyricsView(
         }
     }
 
-    // Update current position only each lyrics change.
+    // Position ticker + play-state listener.
+    // The ticker is a LaunchedEffect child coroutine (cancelled with the
+    // composition) and the listener is registered via DisposableEffect's
+    // onDispose. The previous version built a private CoroutineScope and called
+    // addListener without removing it, leaking one listener + one endless
+    // polling loop per lyrics change.
     LaunchedEffect(mediaController, lyrics) {
-        var trackingJob: Job = Job()
-        val scope = CoroutineScope(Dispatchers.Main)
-
-        if (mediaController?.isPlaying == true) {
-            trackingJob = scope.launch {
-                var position = mediaController.currentPosition.toInt()
-                currentPosition = position
-
-                while (isActive) {
-                    position = mediaController.currentPosition.toInt()
-                    currentPosition = position
-                    delay(getNextUpdateDelay(position, lyrics).milliseconds)
-                }
+        val controller = mediaController ?: return@LaunchedEffect
+        while (isActive) {
+            if (controller.isPlaying) {
+                currentPosition = controller.currentPosition.toInt()
             }
+            delay(getNextUpdateDelay(currentPosition, lyrics).milliseconds)
         }
+    }
 
-        mediaController?.addListener(object : Player.Listener {
+    DisposableEffect(mediaController) {
+        val controller = mediaController
+        if (controller == null) return@DisposableEffect onDispose { }
+        val listener = object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 super.onIsPlayingChanged(isPlaying)
-                if (isPlaying) {
-                    if (trackingJob.isActive) return
-
-                    trackingJob = scope.launch {
-                        var position = mediaController.currentPosition.toInt()
-                        currentPosition = position
-
-                        while (isActive) {
-                            position = mediaController.currentPosition.toInt()
-                            currentPosition = position
-                            delay(getNextUpdateDelay(position, lyrics).milliseconds)
-                        }
-                    }
-                } else trackingJob.cancel()
+                if (isPlaying) currentPosition = controller.currentPosition.toInt()
             }
-        })
+        }
+        controller.addListener(listener)
+        onDispose { controller.removeListener(listener) }
     }
 
     // Lyric index updates and scrolling

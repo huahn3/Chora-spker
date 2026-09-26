@@ -17,24 +17,51 @@ class AlbumRepository @Inject constructor(
     private val localDataSource: LocalDataSource,
     private val navidromeDataSource: NavidromeDataSource
 ) {
+    /** Same idea as [SongRepository.SongsPage]: the remote cursor must not
+     *  include locally-scanned albums. */
+    data class AlbumsPage(
+        val items: List<MediaItem>,
+        val remoteCount: Int,
+        val requestedRemoteCount: Int
+    ) {
+        val remoteExhausted: Boolean
+            get() = requestedRemoteCount > 0 && remoteCount < requestedRemoteCount
+    }
+
     suspend fun getAlbums(
         sort: String? = "alphabeticalByName",
         size: Int? = 100,
         offset: Int? = 0,
         ignoreCachedResponse: Boolean = false,
         favoritesOnly: Boolean = false,
-    ): List<MediaItem> = coroutineScope {
+    ): List<MediaItem> = getAlbumsPage(sort, size, offset, ignoreCachedResponse, favoritesOnly).items
+
+    suspend fun getAlbumsPage(
+        sort: String? = "alphabeticalByName",
+        size: Int? = 100,
+        offset: Int? = 0,
+        ignoreCachedResponse: Boolean = false,
+        favoritesOnly: Boolean = false,
+    ): AlbumsPage = coroutineScope {
         val deferredAlbums = mutableListOf<Deferred<List<MediaItem>>>()
+        var remoteCount = 0
 
         if (NavidromeManager.checkActiveServers())
-            deferredAlbums.add(async { navidromeDataSource.getNavidromeAlbums(sort, size, offset, ignoreCachedResponse, favoritesOnly=favoritesOnly) })
+            deferredAlbums.add(async {
+                navidromeDataSource.getNavidromeAlbums(sort, size, offset, ignoreCachedResponse, favoritesOnly=favoritesOnly)
+                    .also { remoteCount = it.size }
+            })
 
         if (LocalProviderManager.checkActiveFolders())
             if (offset == 0)
                 deferredAlbums.add(async { localDataSource.getLocalAlbums(sort) })
 
 
-        deferredAlbums.awaitAll().flatten()
+        AlbumsPage(
+            items = deferredAlbums.awaitAll().flatten(),
+            remoteCount = remoteCount,
+            requestedRemoteCount = size ?: 0
+        )
     }
 
     suspend fun getAlbum(albumId: String, ignoreCachedResponse: Boolean = false): List<MediaItem>? = coroutineScope {

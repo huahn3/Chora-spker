@@ -59,7 +59,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -90,6 +92,7 @@ class ChoraMediaLibraryService : MediaLibraryService() {
 
     private var scrobbleJob: Job? = null
     private var sleepTimerJob: Job? = null
+    private var networkRecoveryJob: Job? = null
     private var _sleepTimerRemainingTime = MutableStateFlow(0)
     val sleepTimerRemainingTime: StateFlow<Int> = _sleepTimerRemainingTime.asStateFlow()
 
@@ -106,6 +109,11 @@ class ChoraMediaLibraryService : MediaLibraryService() {
 
     companion object {
         private var instance: ChoraMediaLibraryService? = null
+
+        /** Sentinel meaning "stream as-is", and the fallback when the transcode
+         *  settings flow hasn't published within the resolver's budget. */
+        private const val NO_TRANSCODING = "No Transcoding"
+        private const val DEFAULT_TRANSCODING_FORMAT = "mp3"
 
         fun getInstance(): ChoraMediaLibraryService? {
             return instance
@@ -193,6 +201,10 @@ class ChoraMediaLibraryService : MediaLibraryService() {
 
     private val serviceMainScope = CoroutineScope(Dispatchers.Main)
     private val serviceIOScope = CoroutineScope(Dispatchers.IO)
+
+    // Deliberately NOT cancelled in onDestroy: the final state/queue write is
+    // launched from there and must still land after the service scopes die.
+    private val shutdownScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     var aHomeScreenItems = mutableListOf<MediaItem>()
     var aAlbumScreenItems = mutableListOf<MediaItem>()
@@ -286,11 +298,20 @@ class ChoraMediaLibraryService : MediaLibraryService() {
                         // Follow any HTTP 301/302 redirects (e.g. Cloudflare redirection to real backend port/host)
                         uri = followHttpRedirects(uri)
 
-                        val bitrate = runBlocking { transcodeManager.currentBitrateFlow.first() }
-                        if (bitrate == "No Transcoding")
+                        // resolveDataSpec is a blocking ExoPlayer loader-thread
+                        // callback, so runBlocking is unavoidable here — but it must
+                        // be BOUNDED: an unbounded `first()` on these flows stalled
+                        // track start-up indefinitely when the transcode manager
+                        // hadn't published yet.
+                        val bitrate = runBlocking {
+                            withTimeoutOrNull(500) { transcodeManager.currentBitrateFlow.first() }
+                        } ?: NO_TRANSCODING
+                        if (bitrate == NO_TRANSCODING)
                             return dataSpec.withUri(uri)
 
-                        val format = runBlocking { transcodeManager.currentFormatFlow.first() }
+                        val format = runBlocking {
+                            withTimeoutOrNull(500) { transcodeManager.currentFormatFlow.first() }
+                        } ?: DEFAULT_TRANSCODING_FORMAT
 
                         val newUri = uri.buildUpon()
                             .appendQueryParameter("format", format)
@@ -476,8 +497,25 @@ class ChoraMediaLibraryService : MediaLibraryService() {
                     PlaybackException.ERROR_CODE_IO_UNSPECIFIED
                 )) {
                     Log.w("PLAYER", "Playback failed due to network error. Re-resolving STUN server URL...")
-                    CoroutineScope(Dispatchers.IO).launch {
+                    // Remember where we were: the recovery below has to resume
+                    // there, otherwise a transient network blip silently restarts
+                    // the song from 0:00.
+                    val resumeIndex = player.currentMediaItemIndex
+                    val resumePosition = player.currentPosition
+                    val wasPlaying = player.playWhenReady
+                    networkRecoveryJob?.cancel()
+                    networkRecoveryJob = serviceIOScope.launch {
                         NavidromeManager.resolveActiveServerUrl(currentServer, forceRefresh = true)
+                        withContext(Dispatchers.Main) {
+                            // The previous code re-resolved the URL and stopped
+                            // there, leaving the player in STATE_IDLE forever
+                            // ("network error then silence"). Re-prepare instead.
+                            if (player.mediaItemCount > 0) {
+                                player.seekTo(resumeIndex, resumePosition)
+                                player.prepare()
+                                player.playWhenReady = wasPlaying
+                            }
+                        }
                     }
                 }
 
@@ -586,7 +624,18 @@ class ChoraMediaLibraryService : MediaLibraryService() {
                                 songRepository.reportPlayback(mediaId, "playing", currentPosition)
                             }
                         }
-                        saveState(sync = false)
+                        // saveState() is intentionally NOT called here: it rewrote
+                        // up to 100 tracks to DataStore and POSTed the whole queue
+                        // to the server every 10s. It already runs on item
+                        // transition, pause, discontinuity, STATE_ENDED and
+                        // teardown, which is the only data that actually changes.
+                        // The resume *position* is still refreshed here, but via a
+                        // timestamp-only write.
+                        val resumePos = normalizedResumePosition()
+                        serviceIOScope.launch {
+                            LocalDataSettingsManager(applicationContext)
+                                .setPlaybackResumptionPosition(resumePos)
+                        }
                     }
                 } else {
                     tickCount = 0
@@ -618,8 +667,7 @@ class ChoraMediaLibraryService : MediaLibraryService() {
     private inner class LibrarySessionCallback : MediaLibrarySession.Callback {
         override fun onPostConnect(session: MediaSession, controller: MediaSession.ControllerInfo) {
             serviceIOScope.launch {
-                println("ONPOSTCONNTECT MUSIC SERVICE!")
-
+                Log.d("SERVICE", "ONPOSTCONNTECT MUSIC SERVICE!")
                 if (session.isAutoCompanionController(controller))
                     getHomeScreenItems()
 
@@ -931,8 +979,7 @@ class ChoraMediaLibraryService : MediaLibraryService() {
             query: String,
             params: LibraryParams?
         ): ListenableFuture<LibraryResult<Void>> {
-            println("onSearch!!!")
-
+            Log.d("SERVICE", "onSearch!!!")
             session.notifySearchResultChanged(
                 browser,
                 query,
@@ -1014,21 +1061,20 @@ class ChoraMediaLibraryService : MediaLibraryService() {
             player.pause()
         }
 
-        // 2. Synchronously report "paused" to Navidrome server
+        // 2. Report "paused" + 3. save state off the main thread. These used to
+        // be runBlocking{ withTimeoutOrNull(2500) } inline here, freezing the UI
+        // for up to 2.5s on every app swipe-away.
         if (!currentSongId.isNullOrBlank() && !currentSongId.startsWith("Local")) {
-            runBlocking {
-                withTimeoutOrNull(2500) {
-                    try {
-                        songRepository.reportPlayback(currentSongId, "paused", currentPos)
-                    } catch (e: Exception) {
-                        Log.e("SERVICE", "Error reporting pause in onTaskRemoved", e)
+            serviceIOScope.launch {
+                withContext(NonCancellable) {
+                    withTimeoutOrNull(2500) {
+                        runCatching { songRepository.reportPlayback(currentSongId, "paused", currentPos) }
+                            .onFailure { Log.e("SERVICE", "Error reporting pause in onTaskRemoved", it) }
                     }
                 }
             }
         }
-
-        // 3. Save playback state and play queue synchronously
-        saveState(sync = true)
+        saveState(sync = false)
 
         // 4. Clean shutdown
         stopSelf()
@@ -1044,39 +1090,64 @@ class ChoraMediaLibraryService : MediaLibraryService() {
             player.pause()
         }
 
+        // Fire-and-forget: onDestroy must not block the main thread on network.
         if (!currentSongId.isNullOrBlank() && !currentSongId.startsWith("Local")) {
-            runBlocking {
-                withTimeoutOrNull(2500) {
-                    try {
-                        songRepository.reportPlayback(currentSongId, "paused", currentPos)
-                    } catch (e: Exception) {
-                        Log.e("SERVICE", "Error reporting pause in onDestroy", e)
+            serviceIOScope.launch {
+                withContext(NonCancellable) {
+                    withTimeoutOrNull(2500) {
+                        runCatching { songRepository.reportPlayback(currentSongId, "paused", currentPos) }
+                            .onFailure { Log.e("SERVICE", "Error reporting pause in onDestroy", it) }
                     }
                 }
             }
         }
-        saveState(sync = true)
+        saveState(sync = false)
         session?.release()
         scrobbleJob?.cancel()
         sleepTimerJob?.cancel()
+        networkRecoveryJob?.cancel()
+        // The ExoPlayer instance and the two long-lived scopes were never
+        // released, so every service recreation leaked a decoder thread pool and
+        // two scopes still collecting DataStore flows against a dead Service.
+        releasePlayerAndScopes()
         instance = null
         MusicWidgetManager.updateWidgets(this)
         super.onDestroy()
+    }
+
+    /**
+     * Tears down the player and cancels the service scopes. Runs last in
+     * [onDestroy] so the state/report coroutines above have already been handed
+     * their captured values.
+     */
+    private fun releasePlayerAndScopes() {
+        runCatching { player.release() }
+            .onFailure { Log.w("SERVICE", "player.release() failed", it) }
+        serviceMainScope.cancel()
+        serviceIOScope.cancel()
+    }
+
+    /**
+     * Position to persist for resumption: 0 once the track has (effectively)
+     * ended, so a finished song resumes as the next one instead of 3:59/4:00.
+     */
+    private fun normalizedResumePosition(): Long {
+        val duration = player.duration
+        val raw = player.currentPosition
+        return if (player.playbackState == Player.STATE_ENDED ||
+            (duration > 0 && raw >= duration - 1500)
+        ) {
+            0L
+        } else {
+            raw.coerceAtLeast(0L)
+        }
     }
 
     fun saveState(sync: Boolean = false) {
         val count = player.mediaItemCount
         if (count == 0) return
         val currentIndex = player.currentMediaItemIndex
-        val duration = player.duration
-        val rawPosition = player.currentPosition
-        val currentPosition = if (player.playbackState == Player.STATE_ENDED ||
-            (duration > 0 && rawPosition >= duration - 1500)
-        ) {
-            0L
-        } else {
-            rawPosition.coerceAtLeast(0L)
-        }
+        val currentPosition = normalizedResumePosition()
         val items = List(count) { i -> player.getMediaItemAt(i) }
 
         val action = suspend {
@@ -1112,17 +1183,15 @@ class ChoraMediaLibraryService : MediaLibraryService() {
                 }
             }
         } else {
-            serviceIOScope.launch {
-                withContext(NonCancellable) {
-                    action()
-                }
-            }
+            // shutdownScope survives onDestroy, so the teardown save is not
+            // cancelled together with the service scopes.
+            shutdownScope.launch { action() }
         }
     }
 
     //region getChildren
     private fun getHomeScreenItems(): MutableList<MediaItem> {
-        println("GETTING ANDROID AUTO SCREEN ITEMS")
+        Log.d("SERVICE", "GETTING ANDROID AUTO SCREEN ITEMS")
         runBlocking {
             if (aHomeScreenItems.isEmpty()) {
                 val recentlyPlayedAlbums = async { albumRepository.getAlbums("recent", 6) }.await()
@@ -1155,7 +1224,7 @@ class ChoraMediaLibraryService : MediaLibraryService() {
     }
 
     private fun getAlbumScreenItems() : MutableList<MediaItem> {
-        println("GETTING ANDROID AUTO ALBUM SCREEN ITEMS")
+        Log.d("SERVICE", "GETTING ANDROID AUTO ALBUM SCREEN ITEMS")
         runBlocking {
             if (aAlbumScreenItems.isEmpty()) {
                 while (true) {
@@ -1167,12 +1236,12 @@ class ChoraMediaLibraryService : MediaLibraryService() {
                 }
             }
         }
-        println("Got ALL albums. Should be 492, is ${aAlbumScreenItems.size}")
+        Log.d("SERVICE", "Got ALL albums. Should be 492, is ${aAlbumScreenItems.size}")
         return aAlbumScreenItems
     }
 
     private fun getArtistScreenItems() : MutableList<MediaItem> {
-        println("GETTING ANDROID AUTO ARTIST SCREEN ITEMS")
+        Log.d("SERVICE", "GETTING ANDROID AUTO ARTIST SCREEN ITEMS")
         runBlocking {
             if (aArtistsScreenItems.isEmpty()) {
                 val albums = async { artistRepository.getArtists() }.await()

@@ -1,5 +1,6 @@
 package com.craftworks.music.ui.screens
 
+import com.craftworks.music.managers.settings.rememberAppearanceSettings
 import android.net.Uri
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
@@ -101,7 +102,7 @@ fun AlbumDetails(
 
     var showLoading by remember { mutableStateOf(false) }
     val currentAlbum = viewModel.songsInAlbum.collectAsStateWithLifecycle().value
-    val showTrackNumbers by AppearanceSettingsManager(LocalContext.current).showTrackNumbersFlow.collectAsStateWithLifecycle(false)
+    val showTrackNumbers by rememberAppearanceSettings().showTrackNumbersFlow.collectAsStateWithLifecycle(false)
 
     var songToRate by remember { mutableStateOf<MediaItem?>(null) }
 
@@ -430,9 +431,6 @@ fun AlbumDetails(
             }
         }
     }
-
-    if(showAddSongToPlaylistDialog.value)
-        AddSongToPlaylist(setShowDialog =  { showAddSongToPlaylistDialog.value = it } )
 
     songToRate?.let { song ->
         RatingDialog(

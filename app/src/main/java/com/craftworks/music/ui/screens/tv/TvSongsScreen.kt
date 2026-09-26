@@ -80,8 +80,7 @@ fun TvSongsScreen(
 
     if (NavidromeManager.checkActiveServers()) {
         LaunchedEffect(songs.size) {
-            if (songs.size % 50 != 0) return@LaunchedEffect
-            if (songs.size < 50) return@LaunchedEffect
+            if (songs.isEmpty()) return@LaunchedEffect
 
             snapshotFlow {
                 val lastVisible = gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index
@@ -90,7 +89,7 @@ fun TvSongsScreen(
                 if (total < songs.size - 5) return@snapshotFlow false
                 (total - lastVisible) <= 15
             }.filter { it }.collect {
-                viewModel.getMoreSongs(50)
+                viewModel.getMoreSongs()
             }
         }
     }

@@ -90,6 +90,7 @@ fun RadioScreen(
         onRefresh = onRefresh
     ) {
         Scaffold(
+            containerColor = Color.Transparent, // let the app-wide cover wash through, like Home does
             modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
             topBar = {
                 TopAppBar(

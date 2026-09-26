@@ -10,6 +10,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.stringResource
@@ -21,7 +22,6 @@ import com.craftworks.music.R
 import com.craftworks.music.data.model.Screen
 import com.craftworks.music.ui.elements.AlbumGrid
 import com.craftworks.music.ui.viewmodels.HomeScreenViewModel
-import kotlinx.coroutines.runBlocking
 import java.net.URLEncoder
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -45,6 +45,7 @@ fun HomeListsScreen(
     val scrollBehavior = TopAppBarDefaults.enterAlwaysScrollBehavior()
 
     Scaffold(
+        containerColor = Color.Transparent, // let the app-wide cover wash through, like Home does
         modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
         topBar = {
             TopAppBar(
@@ -67,8 +68,10 @@ fun HomeListsScreen(
                         launchSingleTop = true
                     }
                 },
-                onGetAlbum = {
-                    runBlocking { viewModel.getAlbumSongs(it) }
+                onGetAlbum = { albumId ->
+                    // The callback is `suspend` and awaited by the caller; this used
+                    // to be runBlocking on the main thread over a network call.
+                    viewModel.getAlbumSongs(albumId)
                 }
             )
         }

@@ -17,6 +17,7 @@ A fast, lightweight, and modern music streaming client for Android and Android T
 - 🎧 **Navidrome / Subsonic Protocol**: Full compatibility with Navidrome and Subsonic-compliant music servers (transcoding, token-based authentication, server cover art).
 - ⚡ **Local-First Resumption**: Instant 0ms startup without blank state; fast-loads last played track, album art, and progress accurately from DataStore.
 - 📱 **Modern Jetpack Compose UI**: Expressive Material 3 design, dynamic blur palette generation based on album art, interactive circular progress ring, and smooth spring animations.
+- 👆 **Gesture-Driven Floating Dock**: Finger-following swipe-up to unfurl the fullscreen player (swipe-down or lyrics pull-down to collapse), horizontal swipe on the mini row to change track with text cross-slide transitions, and cover-art-tinted theming across every screen.
 - 📺 **Android TV Support**: Optimized TV layout with D-Pad remote navigation, large album displays, and TV player interface.
 - 📝 **Synchronized Lyrics**: Word-synced, line-synced, and plain lyrics powered by LRCLIB and NetEase Music.
 - 🔄 **Cloudflare & Reverse Proxy Resilient**: Built-in HTTP 302 cross-protocol/cross-port sniffing to smoothly stream behind Cloudflare Tunnels and reverse proxies.
@@ -39,7 +40,9 @@ For developers and AI coding assistants joining the project, comprehensive guide
 2. **Lazy Prepare Resumption**:
    When restoring state on startup, assign `mediaItems` and `seekTo()` but keep `playWhenReady = false` without calling `prepare()`, eliminating background network bandwidth waste.
 3. **Dual BackHandler Structure**:
-   Full-screen expanded player (album cover/lyrics/queue) must intercept the system back key to smoothly collapse into the Mini Player (`scaffoldState.bottomSheetState.partialExpand()`), while collapsed states handle page navigation and double-tap home exit.
+   Full-screen expanded player (album cover/lyrics/queue) must intercept the system back key to smoothly collapse into the Mini Player (`playerOffset.animateTo(0f, PlayerSettleSpec)`), while collapsed states handle page navigation and double-tap home exit.
+4. **playerOffset Animatable Gesture Layer**:
+   The fullscreen player is a custom follow-the-finger overlay driven by a single `Animatable(0f..1f)` in `MainActivity` (BottomSheetScaffold was removed: material3 alpha SheetState can't be dragged programmatically and desyncs on flings). All rise/fall visuals (player unfurl, home parallax, dock slide-out) must read the same value inside `graphicsLayer`/`offset` lambdas — never collect popup or expansion state at the activity top level (recomposition storm delays popups ~2s). See `docs/ARCHITECTURE.md` §7–§8 for the full gesture matrix and Compose API pitfalls.
 
 ---
 

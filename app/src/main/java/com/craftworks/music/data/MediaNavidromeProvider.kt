@@ -15,6 +15,16 @@ data class NavidromeProvider (
     var activeBaseUrl: String? = null
 ) {
     fun getEffectiveUrl(): String = activeBaseUrl ?: url
+
+    /**
+     * The server list is logged (and used in error messages) all over the app.
+     * The generated `toString()` used to expose the plaintext password to
+     * logcat, so redact it.
+     */
+    override fun toString(): String =
+        "NavidromeProvider(id=$id, url=$url, username=$username, password=***, " +
+                "enabled=$enabled, allowSelfSignedCert=$allowSelfSignedCert, " +
+                "libraryIds=${libraryIds.map { it.first.id }}, activeBaseUrl=$activeBaseUrl)"
 }
 
 @Serializable

@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import java.net.HttpURLConnection
+import java.util.concurrent.ConcurrentHashMap
 import java.net.URI
 import java.security.SecureRandom
 import java.security.cert.X509Certificate
@@ -27,7 +28,11 @@ import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
 
 object NavidromeManager {
-    private val servers = mutableMapOf<String, NavidromeProvider>()
+    // Read from IO/loader threads (redirect resolution, playback data spec) and
+    // written from the main thread (add/remove server, library toggles). A plain
+    // LinkedHashMap could hand out a torn view or throw
+    // ConcurrentModificationException while saveServers() encoded it.
+    private val servers = ConcurrentHashMap<String, NavidromeProvider>()
 
     private var _currentServerId = MutableStateFlow<String?>(null)
     val currentServerId: StateFlow<String?> = _currentServerId.asStateFlow()
@@ -143,7 +148,7 @@ object NavidromeManager {
         }
 
         updateServersFlow()
-        saveServers()
+        saveServersAndInvalidateData()
     }
 
     fun setServerLibraries(serverId: String, libraries: List<Pair<NavidromeLibrary, Boolean>>) {
@@ -183,7 +188,7 @@ object NavidromeManager {
             return
 
         updateServersFlow()
-        saveServers()
+        saveServersAndInvalidateData()
     }
 
     fun checkActiveServers(): Boolean {
@@ -196,7 +201,8 @@ object NavidromeManager {
     fun setCurrentServer(serverId: String?) {
         _currentServerId.value = serverId
         _libraries.value = serverId?.let { servers[it]?.libraryIds } ?: emptyList()
-        saveServers()
+        // Switching servers changes which library the user is looking at.
+        saveServersAndInvalidateData()
         getCurrentServer()?.let { server ->
             CoroutineScope(Dispatchers.IO).launch {
                 resolveActiveServerUrl(server, forceRefresh = true)
@@ -223,11 +229,25 @@ object NavidromeManager {
         setSyncingStatus(false)
     }
 
+    /**
+     * Persists the server list. Pure persistence: it does NOT invalidate the
+     * music caches. Persisting and invalidating used to be fused, so a runtime
+     * probe writing `activeBaseUrl` (which happens on every playback stream that
+     * hits a 302) made all six screen ViewModels re-fetch their whole library
+     * with `ignoreCachedResponse = true`.
+     */
     fun saveServers() {
-        DataRefreshManager.notifyDataSourcesChanged()
         val serversJson = json.encodeToString(servers as Map<String, NavidromeProvider>)
-        sharedPreferences.edit { putString(PREF_SERVERS, serversJson) }
-        sharedPreferences.edit { putString(PREF_CURRENT_SERVER, _currentServerId.value) }
+        sharedPreferences.edit {
+            putString(PREF_SERVERS, serversJson)
+            putString(PREF_CURRENT_SERVER, _currentServerId.value)
+        }
+    }
+
+    /** For callers whose change genuinely alters what the servers expose. */
+    fun saveServersAndInvalidateData() {
+        DataRefreshManager.notifyDataSourcesChanged()
+        saveServers()
     }
 
     private fun loadServers() {

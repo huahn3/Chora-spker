@@ -1,5 +1,6 @@
 package com.craftworks.music.ui.elements.dialogs.tv
 
+import com.craftworks.music.managers.settings.rememberAppearanceSettings
 import android.app.UiModeManager
 import android.content.Context
 import android.os.Build
@@ -37,6 +38,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.craftworks.music.R
 import com.craftworks.music.data.BottomNavItem
+import com.craftworks.music.data.NavItems
 import com.craftworks.music.managers.settings.AppTheme
 import com.craftworks.music.managers.settings.AppearanceSettingsManager
 import com.craftworks.music.managers.settings.OLEDProtectionMode
@@ -52,7 +54,7 @@ fun NameDialog(
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
-    val username by AppearanceSettingsManager(context).usernameFlow.collectAsStateWithLifecycle("Username")
+    val username by rememberAppearanceSettings().usernameFlow.collectAsStateWithLifecycle("Username")
     var usernameTextField by remember(username) { mutableStateOf(username) }
 
     val textStyle = MaterialTheme.typography.bodyMedium.copy(
@@ -128,7 +130,7 @@ fun ThemeDialog(
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
-    val selectedThemeName by AppearanceSettingsManager(context).appTheme.collectAsState(
+    val selectedThemeName by rememberAppearanceSettings().appTheme.collectAsState(
         AppTheme.SYSTEM.name
     )
 
@@ -201,7 +203,7 @@ fun BackgroundDialog(
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
-    val backgroundType by AppearanceSettingsManager(context).npBackgroundFlow.collectAsState(
+    val backgroundType by rememberAppearanceSettings().npBackgroundFlow.collectAsState(
         NowPlayingBackground.ANIMATED_BLUR
     )
 
@@ -267,7 +269,7 @@ fun OledProtectionModeDialog(
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
-    val protectionMode by AppearanceSettingsManager(context).oledProtectionMode.collectAsState(
+    val protectionMode by rememberAppearanceSettings().oledProtectionMode.collectAsState(
         OLEDProtectionMode.OFF
     )
 
@@ -295,7 +297,7 @@ fun OledProtectionModeDialog(
 fun NavbarItemsDialog(setShowDialog: (Boolean) -> Unit) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
-    val navItems = (AppearanceSettingsManager(context).bottomNavItemsFlow
+    val navItems = (rememberAppearanceSettings().bottomNavItemsFlow
         .collectAsState(initial = emptyList()).value).toMutableList()
 
     GenericCheckDialog(
@@ -313,21 +315,16 @@ fun NavbarItemsDialog(setShowDialog: (Boolean) -> Unit) {
         onReset = {
             coroutineScope.launch {
                 AppearanceSettingsManager(context).setBottomNavItems(
-                    mutableStateListOf(
-                        BottomNavItem(
-                            "Home", R.drawable.rounded_home_24, "home_screen"
-                        ), BottomNavItem(
-                            "Albums", R.drawable.rounded_library_music_24, "album_screen"
-                        ), BottomNavItem(
-                            "Songs", R.drawable.round_music_note_24, "songs_screen", false
-                        ), BottomNavItem(
-                            "Artists", R.drawable.rounded_artist_24, "artists_screen"
-                        ), BottomNavItem(
-                            "Radios", R.drawable.rounded_radio, "radio_screen"
-                        ), BottomNavItem(
-                            "Playlists", R.drawable.placeholder, "playlist_screen"
+                    // TV has no Songs tab; everything else comes from the shared
+                    // default list instead of a fifth hand-maintained copy.
+                    mutableStateListOf<BottomNavItem>().apply {
+                        addAll(
+                            NavItems.default.map { item ->
+                                if (item.screenRoute == NavItems.SONGS) item.copy(enabled = false)
+                                else item
+                            }
                         )
-                    )
+                    }
                 )
             }
         }
@@ -338,7 +335,7 @@ fun NavbarItemsDialog(setShowDialog: (Boolean) -> Unit) {
 fun HomeItemsDialog(setShowDialog: (Boolean) -> Unit) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
-    val homeItems = (AppearanceSettingsManager(context).homeItemsItemsFlow
+    val homeItems = (rememberAppearanceSettings().homeItemsItemsFlow
         .collectAsState(initial = emptyList()).value).toMutableList()
 
     val titleMap = remember {

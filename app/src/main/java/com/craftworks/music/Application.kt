@@ -17,9 +17,11 @@ import java.util.concurrent.TimeUnit
 class ChoraApplication : Application(), ImageLoaderFactory {
     override fun onCreate() {
         super.onCreate()
+        com.craftworks.music.data.datasource.navidrome.NavidromeDataSource.initPersistentSalt(this)
         NavidromeManager.init(this)
         LocalProviderManager.init(this)
         com.craftworks.music.managers.DownloadedSongsManager.init(this)
+        com.craftworks.music.managers.CoverThemeManager.init(this)
     }
 
     override fun newImageLoader(): ImageLoader {

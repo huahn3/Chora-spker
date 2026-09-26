@@ -3,7 +3,13 @@
 package com.craftworks.music.ui.playing
 
 import androidx.annotation.OptIn
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationSpec
@@ -18,6 +24,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.pager.PagerDefaults
 import com.craftworks.music.managers.settings.PageTransitionStyle
 import androidx.compose.foundation.layout.Arrangement
@@ -49,6 +56,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -60,6 +68,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -78,7 +87,6 @@ import androidx.media3.common.MediaMetadata
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaController
 import coil.compose.SubcomposeAsyncImage
-import coil.request.CachePolicy
 import coil.request.ImageRequest
 import com.craftworks.music.R
 import com.craftworks.music.managers.settings.AppearanceSettingsManager
@@ -160,6 +168,11 @@ fun NowPlayingPortrait(
     }
 
     val density = LocalDensity.current
+    // Swipe-to-change-track on the title block: same follow-the-finger text
+    // logic as the dock, but the slide-in direction is mirrored because the
+    // title here is left-aligned instead of centered.
+    val metaDragX = remember { Animatable(0f) }
+    var metaSwipeDir by remember { mutableIntStateOf(0) }
     val pagerState = rememberPagerState(initialPage = 0, pageCount = { 2 })
     var isFlipping by remember { mutableStateOf(false) }
     val flipRotation = remember { Animatable(0f) }
@@ -258,7 +271,6 @@ fun NowPlayingPortrait(
                                     model = ImageRequest.Builder(context)
                                         .data(artworkUri)
                                         .placeholderMemoryCacheKey(metadata?.artworkUri.toString())
-                                        .diskCachePolicy(CachePolicy.DISABLED)
                                         .build(),
                                     contentDescription = "Album Cover Art",
                                     contentScale = ContentScale.Crop,
@@ -307,6 +319,59 @@ fun NowPlayingPortrait(
                 .padding(bottom = 16.dp), // Elevated comfortably
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .graphicsLayer {
+                        translationX = metaDragX.value * 0.45f
+                        alpha = (1f - kotlin.math.abs(metaDragX.value) / 320f).coerceIn(0.25f, 1f)
+                    }
+                    .pointerInput(mediaController) {
+                        var cumDx = 0f
+                        var velX = 0f
+                        var lastT = 0L
+                        fun settle() {
+                            coroutineScope.launch {
+                                val threshold = size.width * 0.18f
+                                when {
+                                    cumDx < -threshold || (cumDx < 0f && velX < -700f) -> {
+                                        metaSwipeDir = -1
+                                        mediaController?.seekToNext()
+                                    }
+                                    cumDx > threshold || (cumDx > 0f && velX > 700f) -> {
+                                        metaSwipeDir = 1
+                                        mediaController?.seekToPrevious()
+                                    }
+                                }
+                                metaDragX.animateTo(
+                                    0f,
+                                    spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = 900f)
+                                )
+                            }
+                        }
+                        detectHorizontalDragGestures(
+                            onDragStart = {
+                                cumDx = 0f
+                                velX = 0f
+                                lastT = 0L
+                            },
+                            onDragEnd = { settle() },
+                            onDragCancel = { settle() },
+                            onHorizontalDrag = { change, dragAmount ->
+                                change.consume()
+                                val now = change.uptimeMillis
+                                val dt = (now - lastT).coerceAtLeast(1L)
+                                lastT = now
+                                cumDx += dragAmount
+                                velX = velX * 0.6f + (dragAmount / dt * 1000f) * 0.4f
+                                val maxShift = with(density) { 140.dp.toPx() }
+                                coroutineScope.launch {
+                                    metaDragX.snapTo(cumDx.coerceIn(-maxShift, maxShift))
+                                }
+                            }
+                        )
+                    }
+            ) {
             // Song Title & Details Button
             CompositionLocalProvider(
                 LocalLayoutDirection provides
@@ -319,12 +384,17 @@ fun NowPlayingPortrait(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-                        Crossfade(
+                        AnimatedContent(
                             targetState = metadata?.title.toString(),
-                            animationSpec = tween(
-                                durationMillis = 400,
-                                easing = FastOutSlowInEasing
-                            ),
+                            transitionSpec = {
+                                // Mirrored vs the dock: the new title enters from
+                                // the side the finger swiped in from.
+                                val dir = if (metaSwipeDir == 0) 1 else metaSwipeDir
+                                (slideInHorizontally(tween(320)) { w -> w / 3 * dir } + fadeIn(tween(320)))
+                                    .togetherWith(
+                                        slideOutHorizontally(tween(220)) { w -> -w / 3 * dir } + fadeOut(tween(220))
+                                    )
+                            },
                             label = "Animated Song Title",
                             modifier = Modifier.weight(1f)
                         ) { title ->
@@ -363,12 +433,15 @@ fun NowPlayingPortrait(
             }
 
             // Artist Info
-            Crossfade(
+            AnimatedContent(
                 targetState = metadata?.artist.toString(),
-                animationSpec = tween(
-                    durationMillis = 400,
-                    easing = FastOutSlowInEasing
-                ),
+                transitionSpec = {
+                    val dir = if (metaSwipeDir == 0) 1 else metaSwipeDir
+                    (slideInHorizontally(tween(320)) { w -> w / 3 * dir } + fadeIn(tween(320)))
+                        .togetherWith(
+                            slideOutHorizontally(tween(220)) { w -> -w / 3 * dir } + fadeOut(tween(220))
+                        )
+                },
                 label = "Animated Artist"
             ) { artistInfo ->
                 Text(
@@ -390,6 +463,7 @@ fun NowPlayingPortrait(
                             marqueeProvider = { Modifier.basicMarquee() }
                         )
                 )
+            }
             }
 
             // Format, Bitrate, Source info
@@ -443,22 +517,21 @@ fun NowPlayingPortrait(
                 }
             }
 
-            // Bottom Action Bar: Download, Sleep Timer, Favorite Heart (Long press: Add to playlist), Queue
+            // Bottom Action Bar, left → right: queue, favourite, output device,
+            // download, sleep timer. (Was download → sleep → output → favourite →
+            // queue, which put the two "identity" actions at opposite ends.)
+            //
+            // Tight centred group, not SpaceEvenly across the full width: 5 × 44dp
+            // spread over ~360dp left ~35dp between each pair, so the row read as
+            // five loose dots rather than one toolbar.
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .requiredHeightIn(min = 48.dp),
-                horizontalArrangement = Arrangement.SpaceEvenly,
+                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                DownloadButton(
-                    iconTextColor,
-                    32.dp,
-                    metadata,
-                    !(metadata?.extras?.getString("navidromeID")?.startsWith("Local_") ?: true)
-                )
-                SleepTimerButton(iconTextColor, 32.dp, sleepTimerMinutes, onOpenSleepTimer)
-                OutputDeviceButton(color = iconTextColor, size = 32.dp, onClick = onOpenJukebox)
+                PlayQueueButton(iconTextColor, 32.dp, onToggleQueue)
                 FavoriteHeartButton(
                     color = iconTextColor,
                     size = 32.dp,
@@ -466,7 +539,14 @@ fun NowPlayingPortrait(
                     onClick = onToggleFavorite,
                     onLongClick = onAddToPlaylist
                 )
-                PlayQueueButton(iconTextColor, 32.dp, onToggleQueue)
+                OutputDeviceButton(color = iconTextColor, size = 32.dp, onClick = onOpenJukebox)
+                DownloadButton(
+                    iconTextColor,
+                    32.dp,
+                    metadata,
+                    !(metadata?.extras?.getString("navidromeID")?.startsWith("Local_") ?: true)
+                )
+                SleepTimerButton(iconTextColor, 32.dp, sleepTimerMinutes, onOpenSleepTimer)
             }
         }
     }

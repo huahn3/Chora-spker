@@ -47,26 +47,37 @@ class MediaControllerManager private constructor(context: Context) : RememberObs
     /**
      * Initializes the MediaController.
      *
-     * If the MediaController has not been built or has been released, this method will build a new one.
+     * Idempotent: repeated ON_START events must not stack up futures or
+     * listeners. Previously every foreground transition built a fresh future
+     * (the old one was never released) and added another listener, leaking one
+     * binder connection + one listener per app switch.
      */
     @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     internal fun initialize() {
-        if (factory == null || factory?.isDone == true) {
-            factory = MediaController.Builder(
-                appContext,
-                SessionToken(appContext, ComponentName(appContext, ChoraMediaLibraryService::class.java))
-            ).buildAsync()
+        val existing = factory
+        if (existing != null && !existing.isDone) {
+            // Still connecting — nothing to do, its listener will publish.
+            return
         }
-        factory?.addListener(
+        if (existing != null) {
+            // Already connected: keep the same controller, just re-publish.
+            publishCurrentMetadata(existing.get())
+            return
+        }
+
+        val future = MediaController.Builder(
+            appContext,
+            SessionToken(appContext, ComponentName(appContext, ChoraMediaLibraryService::class.java))
+        ).buildAsync()
+        factory = future
+
+        future.addListener(
             {
-                // MediaController is available here with controllerFuture.get()
-                controller.value = factory?.let {
-                    if (it.isDone)
-                        it.get()
-                    else
-                        null
-                }
-                publishCurrentMetadata(controller.value)
+                // MediaController is available here with future.get()
+                val value = if (future.isDone) runCatching { future.get() }.getOrNull() else null
+                if (factory !== future) return@addListener
+                controller.value = value
+                publishCurrentMetadata(value)
             },
             MoreExecutors.directExecutor()
         )
@@ -81,13 +92,14 @@ class MediaControllerManager private constructor(context: Context) : RememberObs
         factory?.let {
             MediaController.releaseFuture(it)
             controller.value = null
+            _currentMetadata.value = null
         }
         factory = null
     }
 
     // Lifecycle methods for the RememberObserver interface.
     override fun onAbandoned() { }
-    override fun onForgotten() { }
+    override fun onForgotten() { release() }
     override fun onRemembered() {}
 
     companion object {

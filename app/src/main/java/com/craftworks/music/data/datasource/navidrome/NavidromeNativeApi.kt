@@ -1,5 +1,6 @@
 package com.craftworks.music.data.datasource.navidrome
 
+import com.craftworks.music.data.datasource.installHttpDefaults
 import android.annotation.SuppressLint
 import android.util.Log
 import com.craftworks.music.data.NavidromeProvider
@@ -14,10 +15,6 @@ import com.craftworks.music.managers.NavidromeManager
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
-import io.ktor.client.plugins.logging.LogLevel
-import io.ktor.client.plugins.logging.Logger
-import io.ktor.client.plugins.logging.Logging
-import io.ktor.client.plugins.logging.SIMPLE
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
@@ -73,10 +70,7 @@ class NavidromeNativeApi @Inject constructor() {
             install(ContentNegotiation) {
                 json(json)
             }
-            install(Logging) {
-                level = LogLevel.INFO
-                logger = Logger.SIMPLE
-            }
+        installHttpDefaults()
         }
     }
 
@@ -105,10 +99,7 @@ class NavidromeNativeApi @Inject constructor() {
             install(ContentNegotiation) {
                 json(json)
             }
-            install(Logging) {
-                level = LogLevel.INFO
-                logger = Logger.SIMPLE
-            }
+        installHttpDefaults()
         }
     }
 

@@ -59,6 +59,12 @@ class AlbumScreenViewModel @Inject constructor(
         }
     }
 
+    // Remote-only cursor: the merged list size used to include locally-scanned
+    // albums, so every page after the first skipped that many server albums.
+    private var remoteAlbumCount = 0
+    private val _canLoadMore = MutableStateFlow(false)
+    val canLoadMore: StateFlow<Boolean> = _canLoadMore.asStateFlow()
+
     private var getAlbumsJob: Job? = null
     fun getAlbums() {
         getAlbumsJob?.cancel()
@@ -67,14 +73,14 @@ class AlbumScreenViewModel @Inject constructor(
             _isLoading.value = true
 
             try {
-                coroutineScope {
-                    val allAlbumsDeferred = async { albumRepository.getAlbums(_sortOrder.value.key, 50, 0, true, _showFavoritesOnly.value) }
-
-                    _allAlbums.value = allAlbumsDeferred.await().sortedByDescending {
-                        it.mediaMetadata.extras?.getString("navidromeID")?.startsWith("Local_") == true
-                    }
+                val page = albumRepository.getAlbumsPage(
+                    _sortOrder.value.key, PAGE_SIZE, 0, true, _showFavoritesOnly.value
+                )
+                remoteAlbumCount = page.remoteCount
+                _canLoadMore.value = !page.remoteExhausted
+                _allAlbums.value = page.items.sortedByDescending {
+                    it.mediaMetadata.extras?.getString("navidromeID")?.startsWith("Local_") == true
                 }
-                _isLoading.value = false
             } finally {
                 _isLoading.value = false
             }
@@ -86,25 +92,26 @@ class AlbumScreenViewModel @Inject constructor(
     }
 
     private var isFetchingMore = false
-    fun getMoreAlbums(size: Int) {
+    fun getMoreAlbums(size: Int = PAGE_SIZE) {
         if (isFetchingMore) return
         viewModelScope.launch {
             isFetchingMore = true
             try {
-                coroutineScope {
-                    val albumOffset = _allAlbums.value.size
-                    val newAlbums = albumRepository.getAlbums(_sortOrder.value.key, size, albumOffset, favoritesOnly = _showFavoritesOnly.value)
-                    if (newAlbums.isNotEmpty()) {
-                        val currentIds = _allAlbums.value.mapTo(HashSet()) {
-                            it.mediaMetadata.extras?.getString("navidromeID") ?: it.mediaId
-                        }
-                        val distinctNew = newAlbums.filter {
-                            val id = it.mediaMetadata.extras?.getString("navidromeID") ?: it.mediaId
-                            !currentIds.contains(id)
-                        }
-                        if (distinctNew.isNotEmpty()) {
-                            _allAlbums.value += distinctNew
-                        }
+                val page = albumRepository.getAlbumsPage(
+                    _sortOrder.value.key, size, remoteAlbumCount, favoritesOnly = _showFavoritesOnly.value
+                )
+                remoteAlbumCount += page.remoteCount
+                _canLoadMore.value = !page.remoteExhausted
+                if (page.items.isNotEmpty()) {
+                    val currentIds = _allAlbums.value.mapTo(HashSet()) {
+                        it.mediaMetadata.extras?.getString("navidromeID") ?: it.mediaId
+                    }
+                    val distinctNew = page.items.filter {
+                        val id = it.mediaMetadata.extras?.getString("navidromeID") ?: it.mediaId
+                        !currentIds.contains(id)
+                    }
+                    if (distinctNew.isNotEmpty()) {
+                        _allAlbums.value += distinctNew
                     }
                 }
             } finally {
@@ -136,5 +143,9 @@ class AlbumScreenViewModel @Inject constructor(
         viewModelScope.launch {
             localDataSettingsManager.saveShowFavoriteOnly(showFavorites)
         }
+    }
+
+    companion object {
+        const val PAGE_SIZE = 50
     }
 }

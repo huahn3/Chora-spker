@@ -11,7 +11,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.SheetValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TimePicker
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -58,12 +57,12 @@ fun NowPlayingContent(
     mediaController: MediaController? = null,
     metadata: MediaMetadata? = null,
     viewModel: NowPlayingViewModel = viewModel(),
-    showInternalQueue: Boolean = true
+    showInternalQueue: Boolean = true,
+    showJukeboxSheet: Boolean = true
 ) {
     val backgroundStyle by viewModel.backgroundStyle.collectAsStateWithLifecycle(NowPlayingBackground.STATIC_BLUR)
     val backgroundDarkMode by viewModel.isBackgroundDark.collectAsStateWithLifecycle()
     val oledProtectionMode by viewModel.oledProtectionMode.collectAsStateWithLifecycle(OLEDProtectionMode.OFF)
-    val lyricsOpen by viewModel.lyricsOpen.collectAsStateWithLifecycle()
     val playQueueOpen by viewModel.playQueueOpen.collectAsStateWithLifecycle()
     val detailsOpen by viewModel.detailsOpen.collectAsStateWithLifecycle()
     var showRatingDialog by remember { mutableStateOf(false) }
@@ -168,10 +167,6 @@ fun NowPlayingContent(
         }
     }
 
-    if (showAddSongToPlaylistDialog.value) {
-        AddSongToPlaylist(setShowDialog = { showAddSongToPlaylistDialog.value = it })
-    }
-
     if (sleepTimerOpen) {
         AlertDialog(
             onDismissRequest = { viewModel.setSleepTimerDialogOpen(false) },
@@ -194,16 +189,22 @@ fun NowPlayingContent(
         )
     }
 
-    if (showRatingDialog)
+    // `metadata?.userRating as StarRating` was a hard cast on a nullable field:
+    // it threw ClassCastException for local files / radio items and NPE'd when
+    // metadata was null, so opening the rating dialog could crash the player.
+    val currentUserRating = (metadata?.userRating as? StarRating)?.starRating?.toInt() ?: 0
+    if (showRatingDialog && metadata != null && metadata.userRating is StarRating)
         RatingDialog(
-            currentRating = (metadata?.userRating as StarRating).starRating.toInt(),
+            currentRating = currentUserRating,
             onDismiss = { showRatingDialog = false },
             onSetRating = { rating ->
                 mediaController?.setRating(StarRating(5, rating.toFloat()))
             }
         )
 
-    if (jukeboxDialogOpen) {
+    // Hosted by MainActivity when rendered inside the BottomSheetScaffold sheet:
+    // a nested ModalBottomSheet inside sheetContent desyncs the parent sheet state.
+    if (showJukeboxSheet && jukeboxDialogOpen) {
         JukeboxDeviceBottomSheet(
             mediaController = mediaController,
             onDismissRequest = { viewModel.setJukeboxDialogOpen(false) }

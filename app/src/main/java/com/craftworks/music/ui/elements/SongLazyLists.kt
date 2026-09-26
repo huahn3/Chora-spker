@@ -1,5 +1,6 @@
 package com.craftworks.music.ui.elements
 
+import com.craftworks.music.managers.settings.rememberAppearanceSettings
 import android.util.Log
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
@@ -32,6 +33,7 @@ import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -54,6 +56,7 @@ import com.craftworks.music.managers.settings.AppearanceSettingsManager
 import com.craftworks.music.player.SongHelper
 import com.craftworks.music.ui.viewmodels.AlbumScreenViewModel
 import com.craftworks.music.ui.viewmodels.SongsScreenViewModel
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
 
@@ -71,12 +74,20 @@ fun SongsHorizontalColumn(
 ){
     val listState = rememberLazyListState()
 
-    val showDividers by AppearanceSettingsManager(LocalContext.current).showProviderDividersFlow.collectAsStateWithLifecycle(true)
+    val showDividers by rememberAppearanceSettings().showProviderDividersFlow.collectAsStateWithLifecycle(true)
 
-    // Load more songs at scroll
+    // Load more songs at scroll.
+    // The old guard was `songList.size % 100 != 0` -> return, which silently
+    // stopped paging forever as soon as a local folder contributed a few songs
+    // (size is then no longer a multiple of 100). The ViewModel now reports
+    // whether the server has more.
+    val fallbackCanLoadMore = remember { MutableStateFlow(false) }
+    val canLoadMore by (viewModel?.canLoadMore ?: fallbackCanLoadMore)
+        .collectAsStateWithLifecycle()
+
     if (NavidromeManager.checkActiveServers() && isSearch == false && !showFavoritesOnly){
-        LaunchedEffect(listState, songList.size) {
-            if (songList.isEmpty() || songList.size % 100 != 0) return@LaunchedEffect
+        LaunchedEffect(listState, songList.size, canLoadMore) {
+            if (!canLoadMore) return@LaunchedEffect
 
             snapshotFlow {
                 val lastVisibleItemIndex = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index
@@ -88,7 +99,7 @@ fun SongsHorizontalColumn(
                 .filter { it }
                 .collect {
                     if (viewModel == null) return@collect
-                    viewModel.getMoreSongs(100)
+                    viewModel.getMoreSongs()
                 }
         }
     }
@@ -166,7 +177,7 @@ fun AlbumGrid(
     val gridState = rememberLazyGridState()
     val coroutineScope = rememberCoroutineScope()
 
-    val showDividers by AppearanceSettingsManager(LocalContext.current).showProviderDividersFlow.collectAsStateWithLifecycle(true)
+    val showDividers by rememberAppearanceSettings().showProviderDividersFlow.collectAsStateWithLifecycle(true)
 
     // Group songs by their source (Local or Navidrome)
     val groupedAlbums = albums.groupBy { song ->
@@ -175,7 +186,7 @@ fun AlbumGrid(
 
     if (NavidromeManager.checkActiveServers() && isSearch == false) {
         LaunchedEffect(gridState, albums.size) {
-            if (albums.isEmpty() || albums.size % 50 != 0) return@LaunchedEffect
+            if (albums.isEmpty()) return@LaunchedEffect
 
             snapshotFlow {
                 val lastVisibleItemIndex = gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index
@@ -186,7 +197,7 @@ fun AlbumGrid(
             }
                 .filter { it }
                 .collect {
-                    viewModel.getMoreAlbums(50)
+                    viewModel.getMoreAlbums()
                 }
         }
     }
@@ -291,12 +302,14 @@ fun AlbumGrid(
     albums: List<MediaItem>,
     mediaController: MediaController?,
     onAlbumSelected: (album: MediaData.Album) -> Unit,
-    onGetAlbum: (albumID: String) -> List<MediaItem>
+    // suspend: the caller's only caller runs inside coroutineScope.launch,
+    // so the old signature forced a main-thread runBlocking on a network call.
+    onGetAlbum: suspend (albumID: String) -> List<MediaItem>
 ) {
     val gridState = rememberLazyGridState()
     val coroutineScope = rememberCoroutineScope()
 
-    val showDividers by AppearanceSettingsManager(LocalContext.current).showProviderDividersFlow.collectAsStateWithLifecycle(true)
+    val showDividers by rememberAppearanceSettings().showProviderDividersFlow.collectAsStateWithLifecycle(true)
 
     // Group songs by their source (Local or Navidrome)
     val groupedAlbums = albums.groupBy { song ->
@@ -404,7 +417,7 @@ fun AlbumRow(
     onAlbumSelected: (album: MediaData.Album) -> Unit,
     onPlay: (album: MediaItem) -> Unit,
 ){
-    val showProviderDividers by AppearanceSettingsManager(LocalContext.current).showProviderDividersFlow.collectAsStateWithLifecycle(true)
+    val showProviderDividers by rememberAppearanceSettings().showProviderDividersFlow.collectAsStateWithLifecycle(true)
     val dividerIndex = albums.indexOfFirst { it.mediaMetadata.extras?.getString("navidromeID")?.startsWith("Local_") == true }
 
     LazyRow(
@@ -466,7 +479,7 @@ fun ArtistsGrid(
     onArtistSelected: (artist: MediaData.Artist) -> Unit
 ){
     val gridState = rememberLazyGridState()
-    val showProviderDividers by AppearanceSettingsManager(LocalContext.current).showProviderDividersFlow.collectAsStateWithLifecycle(true)
+    val showProviderDividers by rememberAppearanceSettings().showProviderDividersFlow.collectAsStateWithLifecycle(true)
 
     val groupedArtists = artists.groupBy { artist ->
         if (artist.navidromeID.startsWith("Local_")) "Local" else "Navidrome"

@@ -1,5 +1,6 @@
 package com.craftworks.music.ui.elements
 
+import com.craftworks.music.managers.settings.rememberAppearanceSettings
 import android.graphics.RuntimeShader
 import android.os.Build
 import android.view.animation.PathInterpolator
@@ -43,7 +44,7 @@ fun RippleEffect(
     if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.TIRAMISU)
         return
 
-    val useRippleEffect by AppearanceSettingsManager(LocalContext.current).refreshAnimationFlow.collectAsStateWithLifecycle(false)
+    val useRippleEffect by rememberAppearanceSettings().refreshAnimationFlow.collectAsStateWithLifecycle(false)
     if (!useRippleEffect)
         return
 

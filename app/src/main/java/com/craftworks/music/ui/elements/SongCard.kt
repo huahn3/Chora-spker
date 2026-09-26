@@ -1,5 +1,7 @@
 package com.craftworks.music.ui.elements
 
+import android.util.Log
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -248,7 +250,7 @@ fun HorizontalSongCard(
                             )
                         },
                         onClick = {
-                            println("Add Song To Playlist")
+                            Log.d("SONG_CARD", "Add Song To Playlist")
                             showAddSongToPlaylistDialog.value = true
                             songToAddToPlaylist.value = song
                             expanded = false

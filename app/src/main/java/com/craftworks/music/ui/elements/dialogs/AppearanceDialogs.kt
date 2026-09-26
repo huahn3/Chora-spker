@@ -58,7 +58,6 @@ import com.craftworks.music.ui.playing.NowPlayingAlignment
 import com.craftworks.music.ui.playing.NowPlayingBackground
 import com.craftworks.music.ui.screens.HomeItem
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
 
@@ -91,6 +90,7 @@ fun PreviewThemeDialog(){
 @Preview
 @Composable
 fun NameDialog(setShowDialog: (Boolean) -> Unit = {} ) {
+    val coroutineScope = rememberCoroutineScope()
     val context = LocalContext.current
     val username by AppearanceSettingsManager(context).usernameFlow.collectAsState("Username")
     var usernameTextField by remember(username) { mutableStateOf(username) }
@@ -102,7 +102,7 @@ fun NameDialog(setShowDialog: (Boolean) -> Unit = {} ) {
             OutlinedTextField(
                 value = usernameTextField,
                 onValueChange = {
-                    runBlocking {
+                    coroutineScope.launch {
                         AppearanceSettingsManager(context).setUsername(it)
                     }
                 },
@@ -112,7 +112,7 @@ fun NameDialog(setShowDialog: (Boolean) -> Unit = {} ) {
         },
         confirmButton = {
             Button(onClick = {
-                runBlocking {
+                coroutineScope.launch {
                     AppearanceSettingsManager(context).setUsername(username)
                     setShowDialog(false)
                 }
@@ -126,6 +126,7 @@ fun NameDialog(setShowDialog: (Boolean) -> Unit = {} ) {
 @OptIn(ExperimentalComposeUiApi::class, ExperimentalFoundationApi::class)
 @Composable
 fun BackgroundDialog(setShowDialog: (Boolean) -> Unit) {
+    val coroutineScope = rememberCoroutineScope()
     val context = LocalContext.current
 
     val backgroundType by AppearanceSettingsManager(context).npBackgroundFlow.collectAsState(NowPlayingBackground.ANIMATED_BLUR)
@@ -148,7 +149,7 @@ fun BackgroundDialog(setShowDialog: (Boolean) -> Unit) {
                             .selectable(
                                 selected = (option == backgroundType),
                                 onClick = {
-                                    runBlocking {
+                                    coroutineScope.launch {
                                         AppearanceSettingsManager(context).setBackgroundType(option)
                                     }
                                     setShowDialog(false)
@@ -161,7 +162,7 @@ fun BackgroundDialog(setShowDialog: (Boolean) -> Unit) {
                         RadioButton(
                             selected = option == backgroundType,
                             onClick = {
-                                runBlocking {
+                                coroutineScope.launch {
                                     AppearanceSettingsManager(context).setBackgroundType(option)
                                 }
                                 setShowDialog(false)
@@ -193,6 +194,7 @@ fun BackgroundDialog(setShowDialog: (Boolean) -> Unit) {
 )
 @Composable
 fun ThemeDialog(setShowDialog: (Boolean) -> Unit) {
+    val coroutineScope = rememberCoroutineScope()
     val context = LocalContext.current
 
     val selectedTheme by AppearanceSettingsManager(context).appTheme.collectAsState(
@@ -220,7 +222,7 @@ fun ThemeDialog(setShowDialog: (Boolean) -> Unit) {
                             .selectable(
                                 selected = (option.name == selectedTheme),
                                 onClick = {
-                                    runBlocking {
+                                    coroutineScope.launch {
                                         AppearanceSettingsManager(context).setAppTheme(option)
                                         val uiModeManager =
                                             context.getSystemService(Context.UI_MODE_SERVICE) as UiModeManager
@@ -269,7 +271,7 @@ fun ThemeDialog(setShowDialog: (Boolean) -> Unit) {
                         RadioButton(
                             selected = option.name == selectedTheme,
                             onClick = {
-                                runBlocking {
+                                coroutineScope.launch {
                                     AppearanceSettingsManager(context).setAppTheme(option)
                                     val uiModeManager = context.getSystemService(Context.UI_MODE_SERVICE) as UiModeManager
 

@@ -71,6 +71,7 @@ androidx-hilt-navigation-compose = { group = "androidx.hilt", name = "hilt-navig
 org-snakeyaml = { module = "org.snakeyaml:snakeyaml-engine", version.ref = "snakeYaml" }
 
 [plugins]
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
 hilt = { id = "com.google.dagger.hilt.android", version.ref = "hilt" }
 compose-compiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 jetbrains-kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }

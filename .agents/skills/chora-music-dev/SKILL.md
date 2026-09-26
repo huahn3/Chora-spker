@@ -165,3 +165,24 @@ adb -s 192.168.31.242:5555 shell cat /sdcard/window_dump.xml
 # 7. 查看播放服务、续播与原生扩展接口专属日志流
 adb -s 192.168.31.242:5555 logcat -s JUKEBOX:V NAVIDROME_NATIVE:V LYRICS_TRANSLATE:V RESUMPTION:D
 ```
+
+---
+
+## 5. 铁律 9: 全屏播放页手势层 = playerOffset Animatable 单一数据源 (2026-09-26 重构，严禁回退 Sheet)
+
+- **BottomSheetScaffold 已整体删除**（material3 1.5.0-alpha21 SheetState 无法程序拖拽 + 甩动 cur/tgt 说谎）。非 TV 分支唯一真源：`MainActivity` 内 `playerOffset: Animatable(0f)`（0=停屏下，1=全屏），`PlayerSettleSpec = spring(NoBouncy, 900f)` 定义在 MainActivity.kt 文件尾、ChoraDock import 共享。
+- **三层视图读同一 o 且必须在 graphicsLayer/offset lambda 内读（零重组）**：播放页 `translationY=(1-o)*h` + `scale 0.92→1` + `alpha 0.75→1` + `clip+RoundedCornerShape((1-o)*48dp)`（圆角卡片展开）；首页 Scaffold `scale/alpha` 后退；dock `offset=o*dockHeightPx` + `alpha=(1-2.5o)` 淡出。
+- **手势清单（新增/恢复任何一条都不得破坏其余）**：dock 行竖滑跟手展开、dock 行横滑**只动中间文字**（swipeX 传入 MiniPlayer，translationX*0.45+淡出；左滑=下一曲、右滑=上一曲，阈值 18% 行宽或 ±700px/s）、播放页竖滑跟手收起（阈值 0.55）、播放页标题块横滑切歌（**进场方向与 dock 镜像**，因文字左对齐）、歌词 LazyColumn 到顶后下拉经 `NestedScrollConnection.onPostScroll` 链回 playerOffset（未到顶只滚列表="越往下越拖不动"）、双层 BackHandler（铁律 4）收起用 `animateTo(0f, PlayerSettleSpec)`。
+- **弹窗宿主必须作用域隔离**：队列/输出设备开关状态在 `PlayQueueSheetHost`/`JukeboxSheetHost`（MainActivity.kt 尾部私有 Composable）内部 collect，**严禁**在 Activity 顶层 collect（会重组整个 Scaffold，弹窗延迟实测 ~2s）。
+- **封面配色统一走 CoverWash（严禁 dock 再走 HSL 重映射面板）**：`ui/theme/CoverWash.kt` 的 `rememberCoverWash`(1500ms) + `Modifier.coverWash`，`FULLSCREEN` 给播放页、`COMPACT` 给 dock 卡片与宽屏底栏，两者共用 `CoverThemeManager` 同一份 palette；dock 兜底才回落 `surfaceContainer*` 渐变。`CoverColorScheme` 的 `neutralSat=(sat*0.55).coerceIn(0.14f,0.34f)` 只服务 surface/弹窗，不再是 dock 观感因素。`coverThemeFlow` 关闭时主题、ambient、dock/wash、播放页 palette 必须同时回落。
+- mini player 行左右元素同尺寸：封面圆环 52dp = 输出设备 chip 52dp（图标 26dp）。
+- 详细表格与原理见 `docs/ARCHITECTURE.md` §7。
+
+## 6. 本 Compose 版本 API 避坑速查 (改手势前必读)
+
+1. `detectVerticalDragGestures.onDragEnd` **无速度参数** → 手动 EMA：`vel=vel*0.6+(dy/dt*1000)*0.4`。
+2. `Velocity.y` 是 Float，**没有 `.value`**。
+3. `GraphicsLayerScope` 无 `cornerRadius/roundRadius` → `clip=true; shape=RoundedCornerShape(px.dp)`。
+4. `PointerInputScope.touchSlop` 不可引用 → 固定 10dp 换算。
+5. `LocalConfiguration.current` 不能写进 `remember {}` lambda（非 Composable 上下文）。
+6. 完整清单见 `docs/ARCHITECTURE.md` §8。

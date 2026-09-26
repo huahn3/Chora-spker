@@ -1,5 +1,6 @@
 package com.craftworks.music.ui.screens.tv.settings
 
+import com.craftworks.music.managers.settings.rememberPlaybackSettings
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -47,9 +48,9 @@ fun TvS_PlaybackScreen() {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
 
-    val transcodingBitrateWifi by PlaybackSettingsManager(context).wifiTranscodingBitrateFlow.collectAsState("")
-    val transcodingBitrateData by PlaybackSettingsManager(context).mobileDataTranscodingBitrateFlow.collectAsState("")
-    val transcodingFormat by PlaybackSettingsManager(context).transcodingFormatFlow.collectAsState("opus")
+    val transcodingBitrateWifi by rememberPlaybackSettings().wifiTranscodingBitrateFlow.collectAsState("")
+    val transcodingBitrateData by rememberPlaybackSettings().mobileDataTranscodingBitrateFlow.collectAsState("")
+    val transcodingFormat by rememberPlaybackSettings().transcodingFormatFlow.collectAsState("opus")
     val transcodingFormatEnabled by remember {
         derivedStateOf {
             transcodingBitrateData != "No Transcoding" || transcodingBitrateWifi != "No Transcoding"
@@ -90,7 +91,7 @@ fun TvS_PlaybackScreen() {
         }
 
         item {
-            val sliderValue by PlaybackSettingsManager(context).scrobblePercentFlow.collectAsState(7)
+            val sliderValue by rememberPlaybackSettings().scrobblePercentFlow.collectAsState(7)
 
             Surface(
                 shape = MaterialTheme.shapes.medium,

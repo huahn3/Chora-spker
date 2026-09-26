@@ -1,7 +1,13 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("com.google.devtools.ksp")
-    kotlin("plugin.serialization") version "2.4.0"
+    // Version comes from the catalog (libs.versions.toml -> kotlin). It was
+    // hard-pinned to 2.4.0 here while the Compose/Kotlin compiler plugin stayed
+    // at 2.3.21, so the serialization compiler plugin and the language version
+    // could disagree on the metadata they read/write.
+    alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.compose.compiler)
     alias(libs.plugins.hilt)
 }
@@ -27,6 +33,25 @@ android {
         }
     }
 
+    // Optional real release signing. Drop a `keystore.properties` at the repo
+    // root (git-ignored) with storeFile / storePassword / keyAlias / keyPassword
+    // and release builds get signed with it. Without the file, release falls back
+    // to the debug key so local builds keep working.
+    val keystorePropsFile = rootProject.file("keystore.properties")
+    if (keystorePropsFile.exists()) {
+        val props = Properties().apply {
+            keystorePropsFile.inputStream().use { stream -> stream.use(::load) }
+        }
+        signingConfigs {
+            create("release") {
+                storeFile = file(props.getProperty("storeFile"))
+                storePassword = props.getProperty("storePassword")
+                keyAlias = props.getProperty("keyAlias")
+                keyPassword = props.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
@@ -35,11 +60,23 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            signingConfig = signingConfigs.getByName("debug")
+            // Was hard-wired to the debug keystore, so "release" builds were
+            // installable over debug builds and vice versa. Falls back to debug
+            // only when no release keystore is configured (local/CI), which keeps
+            // `assembleDebug` working while still allowing a real release signing
+            // config via keystore.properties.
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
         }
         debug {
             isDebuggable = true
             isProfileable = true
+        }
+    }
+    testOptions {
+        unitTests {
+            // The parser under test calls android.util.Log; without this every
+            // test touching a log statement throws "not mocked".
+            isReturnDefaultValues = true
         }
     }
     compileOptions {

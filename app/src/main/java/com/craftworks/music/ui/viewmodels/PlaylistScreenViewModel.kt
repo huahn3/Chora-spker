@@ -1,5 +1,7 @@
 package com.craftworks.music.ui.viewmodels
 
+import android.util.Log
+
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -90,8 +92,7 @@ class PlaylistScreenViewModel @Inject constructor(
         val playlistId = _selectedPlaylist.value?.mediaMetadata?.extras?.getString("navidromeID")
         if (playlistId == null) return
 
-        println("Fetching playlist details for playlist ID: $playlistId")
-
+        Log.d("PLAYLIST_VM", "Fetching playlist details for playlist ID: $playlistId")
         viewModelScope.launch {
             val loadingJob = launch {
                 if (_selectedPlaylistSongs.value.isEmpty()) {

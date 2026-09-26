@@ -5,6 +5,8 @@ import android.util.Log
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import com.craftworks.music.data.NavidromeLibrary
+import com.craftworks.music.data.datasource.installHttpDefaults
+import com.craftworks.music.data.datasource.redactSubsonicUrl
 import com.craftworks.music.data.model.Lyric
 import com.craftworks.music.data.model.MediaData
 import com.craftworks.music.data.model.toLyric
@@ -24,16 +26,13 @@ import com.craftworks.music.providers.navidrome.parseNavidromePlaylistsJSON
 import com.craftworks.music.providers.navidrome.parseNavidromeRadioJSON
 import com.craftworks.music.providers.navidrome.parseNavidromeSearch3JSON
 import com.craftworks.music.providers.navidrome.parseNavidromeSimilarSongsJSON
+import com.craftworks.music.providers.navidrome.SubsonicParseException
 import com.craftworks.music.providers.navidrome.parseNavidromeStatus
 import com.craftworks.music.providers.navidrome.parseNavidromeSyncedLyricsJSON
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.cache.HttpCache
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
-import io.ktor.client.plugins.logging.LogLevel
-import io.ktor.client.plugins.logging.Logger
-import io.ktor.client.plugins.logging.Logging
-import io.ktor.client.plugins.logging.SIMPLE
 import io.ktor.client.request.get
 import io.ktor.client.request.headers
 import io.ktor.client.statement.HttpResponse
@@ -64,25 +63,50 @@ class NavidromeDataSource @Inject constructor() {
                 json(json)
             }
             install(HttpCache)
-            install(Logging) {
-                level = LogLevel.ALL
-                logger = Logger.SIMPLE
-            }
+            installHttpDefaults()
         }
     }
 
     private val insecureClient: HttpClient by lazy { buildInsecureClient() }
 
     companion object {
+        @Volatile
+        private var persistentSalt: String? = null
+
         fun md5Hash(input: String): String {
             val md = MessageDigest.getInstance("MD5")
             val hashBytes = md.digest(input.toByteArray())
             return hashBytes.joinToString("") { "%02x".format(it) }
         }
 
-        fun generateSalt(length: Int): String {
+        /**
+         * Subsonic accepts any salt, so we persist one per install. A random salt per
+         * fetch made every cover URL unique, which broke Coil's disk cache and forced
+         * re-downloads each time the player was opened.
+         */
+        fun initPersistentSalt(context: android.content.Context) {
+            if (persistentSalt != null) return
+            val prefs = context.applicationContext
+                .getSharedPreferences("ChoraNetworkPrefs", android.content.Context.MODE_PRIVATE)
+            persistentSalt = prefs.getString("media_salt", null) ?: randomSalt(8).also {
+                prefs.edit().putString("media_salt", it).apply()
+            }
+        }
+
+        private fun randomSalt(length: Int): String {
             val allowedChars = ('a'..'z') + ('A'..'Z') + ('0'..'9')
             return (1..length).map { allowedChars.random() }.joinToString("")
+        }
+
+        fun generateSalt(length: Int): String {
+            if (length == 8) {
+                persistentSalt?.let { return it }
+                synchronized(this) {
+                    persistentSalt?.let { return it }
+                    return randomSalt(8).also { persistentSalt = it }
+                }
+            }
+            return randomSalt(length)
         }
     }
 
@@ -110,10 +134,7 @@ class NavidromeDataSource @Inject constructor() {
                 json(json)
             }
             install(HttpCache)
-            install(Logging) {
-                level = LogLevel.ALL
-                logger = Logger.SIMPLE
-            }
+            installHttpDefaults()
         }
     }
 
@@ -155,7 +176,7 @@ class NavidromeDataSource @Inject constructor() {
             }
 
             if (response.status != HttpStatusCode.OK) {
-                Log.w("NAVIDROME", "HTTP ${response.status} for URL: $url")
+                Log.w("NAVIDROME", "HTTP ${response.status} for URL: ${redactSubsonicUrl(url)}")
                 return@withContext emptyList()
             }
             val responseContent = response.bodyAsText()
@@ -191,7 +212,7 @@ class NavidromeDataSource @Inject constructor() {
                 endpoint.startsWith("getSimilarSongs") -> parsedData.addAll(parseNavidromeSimilarSongsJSON(responseContent, baseUrl, server.username, server.password))
             }
         } catch (e: Exception) {
-            Log.e("NAVIDROME", "Network error for URL: $url", e)
+            Log.e("NAVIDROME", "Network error for URL: ${redactSubsonicUrl(url)}", e)
             val isConnectionError = e is ConnectException ||
                     e is java.net.SocketTimeoutException ||
                     e is UnresolvedAddressException ||
@@ -205,6 +226,12 @@ class NavidromeDataSource @Inject constructor() {
             }
             if (e is UnresolvedAddressException) {
                 navidromeStatus.value = "Unknown host"
+            } else if (e is SubsonicParseException) {
+                // A parse failure means the server answered with something that
+                // isn't a Subsonic payload (proxy error page, login redirect).
+                // Reporting it as "no data" left every list silently empty.
+                navidromeStatus.value = "Unexpected response: ${e.message}"
+                Log.e("NAVIDROME", e.message, e)
             } else {
                 navidromeStatus.value = e.message.toString()
             }

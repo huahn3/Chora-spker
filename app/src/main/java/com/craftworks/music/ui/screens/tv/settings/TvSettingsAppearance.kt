@@ -1,5 +1,6 @@
 package com.craftworks.music.ui.screens.tv.settings
 
+import com.craftworks.music.managers.settings.rememberAppearanceSettings
 import android.os.Build
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -62,7 +63,7 @@ fun TvS_AppearanceScreen() {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
 
-    val nowPlayingTitleAlignment by AppearanceSettingsManager(context).nowPlayingLyricsAlignment.collectAsState(
+    val nowPlayingTitleAlignment by rememberAppearanceSettings().nowPlayingLyricsAlignment.collectAsState(
         NowPlayingAlignment.LEFT
     )
 
@@ -75,7 +76,7 @@ fun TvS_AppearanceScreen() {
         item {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
 
-                val username by AppearanceSettingsManager(context).usernameFlow.collectAsState("Username")
+                val username by rememberAppearanceSettings().usernameFlow.collectAsState("Username")
 
                 SettingsButtonItem(
                     title = stringResource(R.string.Setting_Username),
@@ -85,7 +86,7 @@ fun TvS_AppearanceScreen() {
                 )
 
                 // Theme
-                val selectedTheme by AppearanceSettingsManager(context).appTheme.collectAsState(
+                val selectedTheme by rememberAppearanceSettings().appTheme.collectAsState(
                     AppTheme.SYSTEM.name
                 )
                 val themes = listOf(
@@ -107,7 +108,7 @@ fun TvS_AppearanceScreen() {
                 )
 
                 // Background Style
-                val backgroundType by AppearanceSettingsManager(context).npBackgroundFlow.collectAsState(
+                val backgroundType by rememberAppearanceSettings().npBackgroundFlow.collectAsState(
                     NowPlayingBackground.STATIC_BLUR
                 )
                 val backgroundLabels = mapOf(
@@ -126,7 +127,7 @@ fun TvS_AppearanceScreen() {
                 )
 
                 // OLED Protection Mode
-                val oledProtection by AppearanceSettingsManager(context).oledProtectionMode.collectAsState(
+                val oledProtection by rememberAppearanceSettings().oledProtectionMode.collectAsState(
                     OLEDProtectionMode.OFF
                 )
                 val oledLabels = mapOf(
@@ -145,7 +146,7 @@ fun TvS_AppearanceScreen() {
                 )
 
                 // Screen standby
-                val screenStandby by AppearanceSettingsManager(context).disableScreenStandby.collectAsState(
+                val screenStandby by rememberAppearanceSettings().disableScreenStandby.collectAsState(
                     true
                 )
                 SettingsSwitchItem(
@@ -160,7 +161,7 @@ fun TvS_AppearanceScreen() {
                 )
 
                 // Nav Items
-                val enabledNavbarItems by AppearanceSettingsManager(context).bottomNavItemsFlow.collectAsState(
+                val enabledNavbarItems by rememberAppearanceSettings().bottomNavItemsFlow.collectAsState(
                     emptyList()
                 )
 
@@ -178,7 +179,7 @@ fun TvS_AppearanceScreen() {
                     "recently_added" to R.string.recently_added,
                     "most_played" to R.string.most_played
                 )
-                val enabledHomeItems by AppearanceSettingsManager(context).homeItemsItemsFlow.collectAsState(
+                val enabledHomeItems by rememberAppearanceSettings().homeItemsItemsFlow.collectAsState(
                     emptyList()
                 )
 
@@ -214,7 +215,7 @@ fun TvS_AppearanceScreen() {
         item {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 // Lyrics blur
-                val nowPlayingLyricsBlur by AppearanceSettingsManager(context).nowPlayingLyricsBlurFlow.collectAsState(
+                val nowPlayingLyricsBlur by rememberAppearanceSettings().nowPlayingLyricsBlurFlow.collectAsState(
                     true
                 )
                 SettingsSwitchItem(
@@ -228,7 +229,7 @@ fun TvS_AppearanceScreen() {
                     },
                     enabled = Build.VERSION.SDK_INT > Build.VERSION_CODES.TIRAMISU
                 )
-                val lyricsAutoScroll by AppearanceSettingsManager(context).lyricsAutoScroll.collectAsStateWithLifecycle(true)
+                val lyricsAutoScroll by rememberAppearanceSettings().lyricsAutoScroll.collectAsStateWithLifecycle(true)
                 SettingsSwitchItem(
                     title = stringResource(R.string.Setting_LyricsAutoscroll),
                     icon = ImageVector.vectorResource(R.drawable.rounded_text_select_move_down_24),
@@ -240,7 +241,7 @@ fun TvS_AppearanceScreen() {
                     }
                 )
 
-                val lyricsRecenterAfterScroll by AppearanceSettingsManager(context).lyricsRecenterAfterScroll.collectAsStateWithLifecycle(true)
+                val lyricsRecenterAfterScroll by rememberAppearanceSettings().lyricsRecenterAfterScroll.collectAsStateWithLifecycle(true)
                 SettingsSwitchItem(
                     title = stringResource(R.string.Setting_LyricsRecenter),
                     icon = ImageVector.vectorResource(R.drawable.rounded_vertical_align_center_24),
@@ -253,7 +254,7 @@ fun TvS_AppearanceScreen() {
                 )
 
                 // More Song Info
-                val showMoreInfo by AppearanceSettingsManager(context).showMoreInfoFlow.collectAsState(
+                val showMoreInfo by rememberAppearanceSettings().showMoreInfoFlow.collectAsState(
                     true
                 )
                 SettingsSwitchItem(
@@ -268,7 +269,7 @@ fun TvS_AppearanceScreen() {
                 )
 
                 // Show Navidrome Logo
-                val showNavidromeLogo by AppearanceSettingsManager(context).showNavidromeLogoFlow.collectAsState(
+                val showNavidromeLogo by rememberAppearanceSettings().showNavidromeLogoFlow.collectAsState(
                     true
                 )
                 SettingsSwitchItem(
@@ -283,7 +284,7 @@ fun TvS_AppearanceScreen() {
                 )
 
                 // Show Provider Dividers
-                val showProviderDividers by AppearanceSettingsManager(context).showProviderDividersFlow.collectAsState(
+                val showProviderDividers by rememberAppearanceSettings().showProviderDividersFlow.collectAsState(
                     true
                 )
                 SettingsSwitchItem(
@@ -299,7 +300,7 @@ fun TvS_AppearanceScreen() {
 
                 // Refresh Ripple
                 /*
-                val refreshRipple by AppearanceSettingsManager(context).refreshAnimationFlow.collectAsState(
+                val refreshRipple by rememberAppearanceSettings().refreshAnimationFlow.collectAsState(
                     true
                 )
                 SettingsSwitchItem(
@@ -316,7 +317,7 @@ fun TvS_AppearanceScreen() {
                 */
 
                 // Track numbers in album view
-                val showTrackNumbers by AppearanceSettingsManager(context).showTrackNumbersFlow.collectAsState(
+                val showTrackNumbers by rememberAppearanceSettings().showTrackNumbersFlow.collectAsState(
                     true
                 )
                 SettingsSwitchItem(
@@ -334,7 +335,7 @@ fun TvS_AppearanceScreen() {
 
         // Lyrics Animation Speed Slider
         item {
-            val lyricsAnimationSpeed by AppearanceSettingsManager(context).lyricsAnimationSpeedFlow.collectAsState(
+            val lyricsAnimationSpeed by rememberAppearanceSettings().lyricsAnimationSpeedFlow.collectAsState(
                 1200
             )
             val sliderValue = 2400f - lyricsAnimationSpeed.toFloat() + 600f

@@ -93,7 +93,7 @@ fun TvAlbumScreen(
                 if (total < albums.size - 5) return@snapshotFlow false
                 (total - lastVisible) <= 15
             }.filter { it }.collect {
-                viewModel.getMoreAlbums(50)
+                viewModel.getMoreAlbums()
             }
         }
     }
