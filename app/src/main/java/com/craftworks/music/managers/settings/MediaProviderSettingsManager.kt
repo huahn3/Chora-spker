@@ -8,6 +8,7 @@ import com.craftworks.music.dataStore
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
@@ -25,7 +26,7 @@ class MediaProviderSettingsManager @Inject constructor(
 
     val lrcLibEndpointFlow: Flow<String> = context.dataStore.data.map {
         it[LRCLIB_ENDPOINT] ?: "https://lrclib.net"
-    }
+    }.distinctUntilChanged()
 
     suspend fun setLrcLibEndpoint(LrcLibEndpoint: String) {
         withContext(NonCancellable) {
@@ -37,7 +38,7 @@ class MediaProviderSettingsManager @Inject constructor(
 
     val lrcLibLyricsFlow: Flow<Boolean> = context.dataStore.data.map { preferences ->
         preferences[LRCLIB_LYRICS] ?: true
-    }
+    }.distinctUntilChanged()
 
     suspend fun setUseLrcLib(useLrcLib: Boolean) {
         withContext(NonCancellable) {
@@ -49,7 +50,7 @@ class MediaProviderSettingsManager @Inject constructor(
 
     val netEaseLyricsFlow: Flow<Boolean> = context.dataStore.data.map { preferences ->
         preferences[NETEASE_LYRICS] ?: false
-    }
+    }.distinctUntilChanged()
 
     suspend fun setUseNetEase(useNetEase: Boolean) {
         withContext(NonCancellable) {

@@ -104,56 +104,74 @@ object JukeboxManager {
         context: Context? = null
     ) {
         scope.launch {
-            _isLoading.value = true
-            try {
-                val success = nativeApi.selectJukeboxDevice(deviceId)
-                if (!success) {
-                    mainHandler.post {
-                        context?.let { Toast.makeText(it, "切换输出设备失败", Toast.LENGTH_SHORT).show() }
-                    }
-                    return@launch
+            selectDeviceAwait(deviceId, currentSongId, currentPositionMs, context)
+        }
+    }
+
+    /**
+     * Suspending flavour of [selectDevice]: completes once `_isRemoteActive` and
+     * the local mute have actually been applied. Callers that are about to start
+     * local playback (Playback Handoff takeover) MUST await this, otherwise their
+     * `onMediaItemTransition` still sees `browser` output and forwards nothing —
+     * the phone would play out loud while the speaker stays silent.
+     */
+    suspend fun selectDeviceAwait(
+        deviceId: String,
+        currentSongId: String?,
+        currentPositionMs: Long,
+        context: Context? = null
+    ): Boolean {
+        _isLoading.value = true
+        try {
+            val success = nativeApi.selectJukeboxDevice(deviceId)
+            if (!success) {
+                mainHandler.post {
+                    context?.let { Toast.makeText(it, "切换输出设备失败", Toast.LENGTH_SHORT).show() }
                 }
-
-                _selectedDeviceId.value = deviceId
-                val targetDevice = _devices.value.find { it.id == deviceId } ?: JukeboxDevice(deviceId, deviceId, "unknown")
-                _selectedDevice.value = targetDevice
-                val isRemote = (deviceId != "browser")
-                _isRemoteActive.value = isRemote
-
-                val player = ChoraMediaLibraryService.getInstance()?.player
-
-                if (isRemote) {
-                    // 铁律 2: 本地播放器静音，保持 MediaSession 与通知栏存活
-                    mainHandler.post {
-                        player?.volume = 0f
-                    }
-
-                    // 铁律 4: 携带当前播放进度秒数无缝投播
-                    val posSec = (currentPositionMs / 1000L).coerceAtLeast(0L)
-                    if (!currentSongId.isNullOrBlank() && !currentSongId.startsWith("Local_")) {
-                        nativeApi.playJukebox(currentSongId, posSec)
-                    }
-
-                    startStatusPolling()
-                    mainHandler.post {
-                        context?.let { Toast.makeText(it, "已切换至: ${targetDevice.name}", Toast.LENGTH_SHORT).show() }
-                    }
-                } else {
-                    // 切回本机播放
-                    stopStatusPolling()
-                    mainHandler.post {
-                        player?.volume = 1f
-                        player?.play()
-                        context?.let { Toast.makeText(it, "已切换为本机播放", Toast.LENGTH_SHORT).show() }
-                    }
-                }
-
-                refreshDevices()
-            } catch (e: Exception) {
-                Log.e("JUKEBOX", "Error selecting device $deviceId: ${e.message}")
-            } finally {
-                _isLoading.value = false
+                return false
             }
+
+            _selectedDeviceId.value = deviceId
+            val targetDevice = _devices.value.find { it.id == deviceId } ?: JukeboxDevice(deviceId, deviceId, "unknown")
+            _selectedDevice.value = targetDevice
+            val isRemote = (deviceId != "browser")
+            _isRemoteActive.value = isRemote
+
+            val player = ChoraMediaLibraryService.getInstance()?.player
+
+            if (isRemote) {
+                // 铁律 2: 本地播放器静音，保持 MediaSession 与通知栏存活
+                mainHandler.post {
+                    player?.volume = 0f
+                }
+
+                // 铁律 4: 携带当前播放进度秒数无缝投播
+                val posSec = (currentPositionMs / 1000L).coerceAtLeast(0L)
+                if (!currentSongId.isNullOrBlank() && !currentSongId.startsWith("Local_")) {
+                    nativeApi.playJukebox(currentSongId, posSec)
+                }
+
+                startStatusPolling()
+                mainHandler.post {
+                    context?.let { Toast.makeText(it, "已切换至: ${targetDevice.name}", Toast.LENGTH_SHORT).show() }
+                }
+            } else {
+                // 切回本机播放
+                stopStatusPolling()
+                mainHandler.post {
+                    player?.volume = 1f
+                    player?.play()
+                    context?.let { Toast.makeText(it, "已切换为本机播放", Toast.LENGTH_SHORT).show() }
+                }
+            }
+
+            refreshDevices()
+            return true
+        } catch (e: Exception) {
+            Log.e("JUKEBOX", "Error selecting device $deviceId: ${e.message}")
+            return false
+        } finally {
+            _isLoading.value = false
         }
     }
 

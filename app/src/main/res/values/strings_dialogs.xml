@@ -88,6 +88,15 @@
     <string name="NowPlayingTitleAlignment_Center">Center</string>
     <string name="NowPlayingTitleAlignment_Right">Right</string>
 
+    <!-- Mini Player Button Layout -->
+    <string name="Setting_MiniPlayerButtons">Mini Player Buttons</string>
+    <string name="MiniPlayerButtons_LeftPaired">Left Paired</string>
+    <string name="MiniPlayerButtons_Symmetric">Symmetric</string>
+    <string name="MiniPlayerButtons_RightPaired">Right Paired</string>
+    <string name="MiniPlayerButtons_LeftPaired_Desc">Cover and output device side by side on the left, easier for left thumb</string>
+    <string name="MiniPlayerButtons_Symmetric_Desc">Cover on the left, output device on the right (default)</string>
+    <string name="MiniPlayerButtons_RightPaired_Desc">Cover and output device side by side on the right, easier for right thumb</string>
+
     <!-- Now Playing Title Alignment -->
     <string name="Dialog_SetSleepTimer">Set Sleep Timer</string>
 </resources>

@@ -4,6 +4,9 @@ import com.craftworks.music.data.datasource.installHttpDefaults
 import android.annotation.SuppressLint
 import android.util.Log
 import com.craftworks.music.data.NavidromeProvider
+import com.craftworks.music.data.datasource.navidrome.NavidromeDataSource.Companion.CLIENT_UNIQUE_ID_HEADER
+import com.craftworks.music.data.datasource.navidrome.NavidromeDataSource.Companion.appContextRef
+import com.craftworks.music.data.datasource.navidrome.NavidromeDataSource.Companion.getOrCreateClientUniqueId
 import com.craftworks.music.data.model.JukeboxControlRequest
 import com.craftworks.music.data.model.JukeboxDevicesResponse
 import com.craftworks.music.data.model.JukeboxPlayRequest
@@ -11,6 +14,11 @@ import com.craftworks.music.data.model.JukeboxSelectRequest
 import com.craftworks.music.data.model.JukeboxStatusResponse
 import com.craftworks.music.data.model.LyricsTranslationRequest
 import com.craftworks.music.data.model.LyricsTranslationResponse
+import com.craftworks.music.data.model.PlaybackHandoffEvent
+import com.craftworks.music.data.model.PlaybackSessionDto
+import com.craftworks.music.data.model.PlaybackSessionsResponse
+import com.craftworks.music.data.model.TakeoverRequest
+import com.craftworks.music.data.model.TakeoverResponse
 import com.craftworks.music.managers.NavidromeManager
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.okhttp.OkHttp
@@ -430,5 +438,233 @@ class NavidromeNativeApi @Inject constructor() {
             Log.e("JUKEBOX", "Error getting jukebox status", e)
         }
         null
+    }
+
+    // ==========================================
+    // 多端同步接管 (Playback Handoff & Takeover)
+    // Native auth: ONLY `X-ND-Authorization` is honoured server-side;
+    // the standard `Authorization` header 401s (verified 2026-09-27).
+    // Every call also sends `X-ND-Client-Unique-Id` so `isCurrentSession`
+    // and SSE `targetSessionId` filtering line up with our own session.
+    // ==========================================
+
+    fun myClientUniqueId(): String? =
+        appContextRef?.let { getOrCreateClientUniqueId(it) }
+
+    private fun nativeAuthHeaders(
+        builder: io.ktor.client.request.HttpRequestBuilder,
+        token: String
+    ) {
+        // Keep the dual header (reverse-proxy compat) — server only reads X-ND.
+        builder.header("Authorization", "Bearer $token")
+        builder.header("X-ND-Authorization", "Bearer $token")
+        myClientUniqueId()?.let { builder.header(CLIENT_UNIQUE_ID_HEADER, it) }
+    }
+
+    suspend fun getPlaybackSessions(): PlaybackSessionsResponse? = withContext(Dispatchers.IO) {
+        val server = NavidromeManager.getCurrentServer() ?: return@withContext null
+        val baseUrl = NavidromeManager.resolveActiveServerUrl(server)
+        val token = getBearerToken(server) ?: return@withContext null
+        val httpClient = getHttpClient(server)
+
+        suspend fun fetch(t: String): io.ktor.client.statement.HttpResponse =
+            httpClient.get("${baseUrl}/api/playback/sessions") {
+                nativeAuthHeaders(this, t)
+            }
+
+        try {
+            var response = fetch(token)
+            if (response.status == HttpStatusCode.Unauthorized) {
+                val newToken = getBearerToken(server, forceRefresh = true)
+                    ?: return@withContext null
+                response = fetch(newToken)
+            }
+            if (response.status == HttpStatusCode.OK) {
+                return@withContext json.decodeFromString(
+                    PlaybackSessionsResponse.serializer(),
+                    response.bodyAsText()
+                )
+            }
+            Log.w("HANDOFF", "getPlaybackSessions failed: HTTP ${response.status}")
+        } catch (e: Exception) {
+            Log.e("HANDOFF", "Error getting playback sessions", e)
+        }
+        null
+    }
+
+    suspend fun getPlaybackSession(sessionId: String): PlaybackSessionDto? =
+        withContext(Dispatchers.IO) {
+            val server = NavidromeManager.getCurrentServer() ?: return@withContext null
+            val baseUrl = NavidromeManager.resolveActiveServerUrl(server)
+            val token = getBearerToken(server) ?: return@withContext null
+            val httpClient = getHttpClient(server)
+
+            suspend fun fetch(t: String): io.ktor.client.statement.HttpResponse =
+                httpClient.get("${baseUrl}/api/playback/sessions/$sessionId") {
+                    nativeAuthHeaders(this, t)
+                }
+
+            try {
+                var response = fetch(token)
+                if (response.status == HttpStatusCode.Unauthorized) {
+                    val newToken = getBearerToken(server, forceRefresh = true)
+                        ?: return@withContext null
+                    response = fetch(newToken)
+                }
+                if (response.status == HttpStatusCode.OK) {
+                    return@withContext json.decodeFromString(
+                        PlaybackSessionDto.serializer(),
+                        response.bodyAsText()
+                    )
+                }
+                // 404 = session expired/gone; not an error for takeover flow.
+                if (response.status != HttpStatusCode.NotFound) {
+                    Log.w("HANDOFF", "getPlaybackSession($sessionId) -> HTTP ${response.status}")
+                }
+            } catch (e: Exception) {
+                Log.e("HANDOFF", "Error getting playback session $sessionId", e)
+            }
+            null
+        }
+
+    /**
+     * Notify the server that we took over [targetSessionId]'s playback.
+     * Always 200 (missing target => `session` absent) — never throw for that.
+     * Only `pause`/`stop` are legal actions; anything else is a 400.
+     */
+    suspend fun takeoverSession(
+        targetSessionId: String,
+        action: String = "pause",
+        newPlayerName: String? = "Chora (手机端)",
+        targetOutput: String? = null
+    ): TakeoverResponse? = withContext(Dispatchers.IO) {
+        val server = NavidromeManager.getCurrentServer() ?: return@withContext null
+        val baseUrl = NavidromeManager.resolveActiveServerUrl(server)
+        val token = getBearerToken(server) ?: return@withContext null
+        val httpClient = getHttpClient(server)
+        val payload = json.encodeToString(
+            TakeoverRequest.serializer(),
+            TakeoverRequest(
+                action = if (action == "stop") "stop" else "pause",
+                sourceSessionId = myClientUniqueId(),
+                newPlayerName = newPlayerName,
+                targetOutput = targetOutput
+            )
+        )
+
+        suspend fun post(t: String): io.ktor.client.statement.HttpResponse =
+            httpClient.post("${baseUrl}/api/playback/sessions/$targetSessionId/takeover") {
+                contentType(ContentType.Application.Json)
+                nativeAuthHeaders(this, t)
+                setBody(payload)
+            }
+
+        try {
+            var response = post(token)
+            if (response.status == HttpStatusCode.Unauthorized) {
+                val newToken = getBearerToken(server, forceRefresh = true)
+                    ?: return@withContext null
+                response = post(newToken)
+            }
+            if (response.status == HttpStatusCode.OK) {
+                return@withContext json.decodeFromString(
+                    TakeoverResponse.serializer(),
+                    response.bodyAsText()
+                )
+            }
+            Log.w("HANDOFF", "takeover($targetSessionId) -> HTTP ${response.status}")
+        } catch (e: Exception) {
+            Log.e("HANDOFF", "Error taking over session $targetSessionId", e)
+        }
+        null
+    }
+
+    /**
+     * SSE listener for `/api/events?jwt=`. EventSource can't set headers so
+     * the token MUST go in the query string. Uses a raw OkHttp stream
+     * (Ktor 3 buffers `response.body()`, so it can never stream SSE).
+     * Calls [onHandoff] for every `playbackHandoff` event; returns only when
+     * [isActive] flips false or the coroutine is cancelled — the caller owns
+     * the 5s reconnect loop.
+     */
+    suspend fun streamPlaybackHandoffEvents(
+        isActive: () -> Boolean,
+        onHandoff: suspend (PlaybackHandoffEvent) -> Unit
+    ) {
+        val server = NavidromeManager.getCurrentServer() ?: return
+        val baseUrl = NavidromeManager.resolveActiveServerUrl(server)
+        // Cached token first: forcing a login on every 5s reconnect hammered
+        // the server when the SSE route wasn't mounted (DevActivityPanel=off).
+        var token = getBearerToken(server) ?: return
+        val url = "$baseUrl/api/events?jwt=$token"
+        withContext(Dispatchers.IO) {
+            var conn: java.net.HttpURLConnection? = null
+            try {
+                conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+                conn.setRequestProperty("Accept", "text/event-stream")
+                conn.setRequestProperty("Cache-Control", "no-cache")
+                myClientUniqueId()?.let { conn.setRequestProperty(CLIENT_UNIQUE_ID_HEADER, it) }
+                conn.connectTimeout = 15_000
+                conn.readTimeout = 0 // infinite stream; socket breaks on server close
+                conn.connect()
+                var code = conn.responseCode
+                if (code == 401) {
+                    // Expired JWT: refresh once and reopen the stream.
+                    token = getBearerToken(server, forceRefresh = true) ?: return@withContext
+                    try { conn.disconnect() } catch (e: Exception) { }
+                    conn = (java.net.URL("$baseUrl/api/events?jwt=$token")
+                        .openConnection() as java.net.HttpURLConnection).apply {
+                        setRequestProperty("Accept", "text/event-stream")
+                        setRequestProperty("Cache-Control", "no-cache")
+                        myClientUniqueId()?.let { setRequestProperty(CLIENT_UNIQUE_ID_HEADER, it) }
+                        connectTimeout = 15_000
+                        readTimeout = 0
+                        connect()
+                    }
+                    code = conn.responseCode
+                    if (code == 401) {
+                        Log.w("HANDOFF", "SSE stream unauthorized even after refresh")
+                        return@withContext
+                    }
+                }
+                if (code != 200) {
+                    Log.w("HANDOFF", "SSE stream failed: HTTP $code")
+                    return@withContext
+                }
+                conn.inputStream.bufferedReader(Charsets.UTF_8).use { reader ->
+                    var currentEvent = ""
+                    while (isActive()) {
+                        val line = try {
+                            withContext(Dispatchers.IO) { reader.readLine() }
+                        } catch (e: Exception) {
+                            if (e is kotlinx.coroutines.CancellationException) throw e
+                            Log.w("HANDOFF", "SSE read error: ${e.message}")
+                            break
+                        } ?: break // EOF: server closed / DevActivityPanel off
+                        val trimmed = line.trimEnd('\r').trim()
+                        when {
+                            trimmed.startsWith("event:") ->
+                                currentEvent = trimmed.removePrefix("event:").trim()
+                            trimmed.startsWith("data:") -> {
+                                val data = trimmed.removePrefix("data:").trim()
+                                if (currentEvent == "playbackHandoff" && data.isNotEmpty()) {
+                                    try {
+                                        onHandoff(json.decodeFromString(PlaybackHandoffEvent.serializer(), data))
+                                    } catch (e: Exception) {
+                                        Log.w("HANDOFF", "Bad handoff payload: ${e.message}")
+                                    }
+                                }
+                            }
+                            trimmed.isEmpty() -> currentEvent = ""
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                Log.w("HANDOFF", "SSE stream error: ${e.message}")
+            } finally {
+                try { conn?.disconnect() } catch (e: Exception) { }
+            }
+        }
     }
 }

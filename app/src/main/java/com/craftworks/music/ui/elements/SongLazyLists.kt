@@ -555,7 +555,7 @@ fun PlaylistGrid(playlists: List<MediaItem>, onPlaylistSelected: (playlist: Medi
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         contentPadding = PaddingValues(12.dp)
     ) {
-        items(playlists) {playlist ->
+        items(playlists, key = { it.mediaId }) {playlist ->
             PlaylistCard(playlist = playlist,
                 onClick = {
                     onPlaylistSelected(playlist)

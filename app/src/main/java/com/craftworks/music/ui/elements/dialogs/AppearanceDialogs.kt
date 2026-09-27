@@ -53,6 +53,7 @@ import com.craftworks.music.R
 import com.craftworks.music.data.BottomNavItem
 import com.craftworks.music.managers.settings.AppTheme
 import com.craftworks.music.managers.settings.AppearanceSettingsManager
+import com.craftworks.music.managers.settings.MiniPlayerButtonLayout
 import com.craftworks.music.ui.elements.bounceClick
 import com.craftworks.music.ui.playing.NowPlayingAlignment
 import com.craftworks.music.ui.playing.NowPlayingBackground
@@ -679,6 +680,75 @@ fun PageTransitionStyleDialog(
                             )
                             Text(
                                 text = desc,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { }
+    )
+}
+
+@Composable
+@Preview
+fun MiniPlayerButtonLayoutDialog(
+    setShowDialog: (Boolean) -> Unit = { },
+    title: String = "",
+    selection: MiniPlayerButtonLayout = MiniPlayerButtonLayout.SYMMETRIC,
+    onSet: (MiniPlayerButtonLayout) -> Unit = { }
+) {
+    AlertDialog(
+        onDismissRequest = { setShowDialog(false) },
+        title = { Text(title) },
+        text = {
+            Column {
+                MiniPlayerButtonLayout.entries.forEach { layout ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .selectable(
+                                selected = (layout == selection),
+                                onClick = {
+                                    onSet(layout)
+                                    setShowDialog(false)
+                                },
+                                role = Role.RadioButton
+                            )
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = layout == selection,
+                            onClick = {
+                                onSet(layout)
+                                setShowDialog(false)
+                            },
+                            modifier = Modifier.bounceClick()
+                        )
+                        val labelRes = when (layout) {
+                            MiniPlayerButtonLayout.LEFT_PAIRED -> R.string.MiniPlayerButtons_LeftPaired
+                            MiniPlayerButtonLayout.SYMMETRIC -> R.string.MiniPlayerButtons_Symmetric
+                            MiniPlayerButtonLayout.RIGHT_PAIRED -> R.string.MiniPlayerButtons_RightPaired
+                        }
+                        val descRes = when (layout) {
+                            MiniPlayerButtonLayout.LEFT_PAIRED -> R.string.MiniPlayerButtons_LeftPaired_Desc
+                            MiniPlayerButtonLayout.SYMMETRIC -> R.string.MiniPlayerButtons_Symmetric_Desc
+                            MiniPlayerButtonLayout.RIGHT_PAIRED -> R.string.MiniPlayerButtons_RightPaired_Desc
+                        }
+
+                        Column(modifier = Modifier.fillMaxWidth().padding(start = 4.dp)) {
+                            Text(
+                                text = stringResource(labelRes),
+                                fontWeight = FontWeight.SemiBold,
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onBackground
+                            )
+                            Text(
+                                text = stringResource(descRes),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )

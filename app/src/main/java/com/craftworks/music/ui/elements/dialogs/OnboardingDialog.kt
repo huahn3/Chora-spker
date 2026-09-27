@@ -226,7 +226,7 @@ private fun OverviewStep(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            items(localProviders) { local ->
+            items(localProviders, key = { it }) { local ->
                 LocalProviderCard(local)
             }
             items(navidromeServers, key = { it.id }) { server ->

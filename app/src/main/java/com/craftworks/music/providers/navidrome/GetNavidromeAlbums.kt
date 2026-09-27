@@ -60,10 +60,7 @@ fun parseNavidromeAlbumJSON(
 
     album.add(selectedAlbum?.toMediaItem() ?: MediaItem.EMPTY)
 
-    println("Added album: ${selectedAlbum?.navidromeID}")
-
     album.addAll(selectedAlbum?.songs?.map {
-        println("Added song to album: ${it.title}")
         it.toMediaItem()
     } ?: emptyList())
 

@@ -145,10 +145,10 @@ class LocalProvider @Inject constructor(
         return albumIds
     }
 
-    fun getLocalAlbum(albumId: String): List<MediaItem>? {
+    suspend fun getLocalAlbum(albumId: String): List<MediaItem>? = withContext(Dispatchers.IO) {
         val albumIdLong = albumId.removePrefix(LOCAL_PREFIX).toLongOrNull() ?: run {
             Log.e(TAG, "Invalid album ID format: $albumId")
-            return null
+            return@withContext null
         }
 
         Log.d(TAG, "Getting album data for id $albumIdLong")
@@ -222,9 +222,10 @@ class LocalProvider @Inject constructor(
             }
         }
 
-        return albumWithSongs
+        albumWithSongs
     }
 
+    // Only reached from getLocalAlbum(), already inside Dispatchers.IO.
     private fun getLocalAlbumSongs(albumId: Long): List<MediaItem> {
         Log.d(TAG, "Getting Songs for album id: $albumId")
 
@@ -342,7 +343,7 @@ class LocalProvider @Inject constructor(
     }
     //endregion
 
-    fun getLocalSongs(): List<MediaItem> {
+    suspend fun getLocalSongs(): List<MediaItem> = withContext(Dispatchers.IO) {
         val songs = mutableListOf<MediaItem>()
         val contentResolver = context.contentResolver
         val uri = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
@@ -362,7 +363,7 @@ class LocalProvider @Inject constructor(
         )
 
         val folders = LocalProviderManager.getAllFolders()
-        if (folders.isEmpty()) return emptyList()
+        if (folders.isEmpty()) return@withContext emptyList()
 
         val selectionBuilder = StringBuilder("${MediaStore.Audio.Media.IS_MUSIC} != 0 AND (")
         folders.forEachIndexed { index, folder ->
@@ -451,10 +452,10 @@ class LocalProvider @Inject constructor(
             }
         }
 
-        return songs
+        songs
     }
 
-    fun getLocalArtists(): List<MediaData.Artist> {
+    suspend fun getLocalArtists(): List<MediaData.Artist> = withContext(Dispatchers.IO) {
         val artists = mutableSetOf<MediaData.Artist>()
         val songs = getLocalSongs()
 
@@ -473,7 +474,7 @@ class LocalProvider @Inject constructor(
             )
         }
 
-        return artists.sortedBy { it.name }
+        artists.sortedBy { it.name }
     }
 
     suspend fun getAlbumsByArtistId(artistId: String): List<MediaItem> = withContext(Dispatchers.IO) {

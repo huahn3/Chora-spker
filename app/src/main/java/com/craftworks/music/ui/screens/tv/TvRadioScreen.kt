@@ -77,7 +77,7 @@ fun TvRadioScreen(
         horizontalArrangement = Arrangement.spacedBy(24.dp),
         verticalArrangement = Arrangement.spacedBy(24.dp),
     ) {
-        items(radios) { radio ->
+        items(radios, key = { it.mediaId }) { radio ->
             TvRadioCard (
                 radio = radio,
                 onClick = {

@@ -94,7 +94,6 @@ fun SongsScreen(
                         SongsHorizontalColumn(
                             songList = searchResults,
                             onSongSelected = { songs, index ->
-                                println("Starting song at index: $index")
                                 coroutineScope.launch {
                                     SongHelper.play(songs, index, mediaController)
                                 }
@@ -131,7 +130,6 @@ fun SongsScreen(
                 SongsHorizontalColumn(
                     songList = allSongsList,
                     onSongSelected = { songs, index ->
-                        println("Starting song at index: $index")
                         coroutineScope.launch {
                             SongHelper.play(songs, index, mediaController)
                         }

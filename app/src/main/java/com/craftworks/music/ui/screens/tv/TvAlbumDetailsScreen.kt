@@ -294,7 +294,7 @@ fun TvAlbumDetails(
                                 )
                             }
                         }
-                        items(disc) { song ->
+                        items(disc, key = { it.mediaId }) { song ->
                             TvHorizontalSongCard (
                                 song = song,
                                 showTrackNumber = showTrackNumbers,
@@ -314,7 +314,7 @@ fun TvAlbumDetails(
                         }
                     }
                 } else {
-                    items(songs) { song ->
+                    items(songs, key = { it.mediaId }) { song ->
                         TvHorizontalSongCard (
                             song = song,
                             showTrackNumber = showTrackNumbers,

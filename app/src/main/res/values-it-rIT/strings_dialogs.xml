@@ -64,6 +64,15 @@
     <string name="NowPlayingTitleAlignment_Left">Sinistra</string>
     <string name="NowPlayingTitleAlignment_Center">Centro</string>
     <string name="NowPlayingTitleAlignment_Right">Destra</string>
+
+    <!-- Mini Player Button Layout -->
+    <string name="Setting_MiniPlayerButtons">Pulsanti del mini player</string>
+    <string name="MiniPlayerButtons_LeftPaired">Affiancati a sinistra</string>
+    <string name="MiniPlayerButtons_Symmetric">Simmetrici</string>
+    <string name="MiniPlayerButtons_RightPaired">Affiancati a destra</string>
+    <string name="MiniPlayerButtons_LeftPaired_Desc">Copertina e dispositivo di uscita affiancati a sinistra, più comodo con il pollice sinistro</string>
+    <string name="MiniPlayerButtons_Symmetric_Desc">Copertina a sinistra, dispositivo di uscita a destra (predefinito)</string>
+    <string name="MiniPlayerButtons_RightPaired_Desc">Copertina e dispositivo di uscita affiancati a destra, più comodo con il pollice destro</string>
     <!-- Now Playing Title Alignment -->
     <string name="Dialog_SetSleepTimer">Imposta Timer</string>
 </resources>

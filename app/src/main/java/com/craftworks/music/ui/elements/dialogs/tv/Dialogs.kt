@@ -100,7 +100,7 @@ fun <T> GenericCheckDialog(
                 modifier = Modifier
                     .fillMaxWidth()
             ) {
-                items(items) { item ->
+                items(items, key = { it.toString() }) { item ->
                     val index = items.indexOf(item)
 
                     ListItem(

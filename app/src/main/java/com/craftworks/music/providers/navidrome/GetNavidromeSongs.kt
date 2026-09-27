@@ -18,6 +18,47 @@ data class SearchResult3(
     val artist: List<MediaData.Artist>? = listOf(),
 )
 
+/**
+ * Single-song lookup used by Playback Handoff: `/rest/getSong.view?id=` returns
+ * one `song` object that must become a playable [MediaItem] (stream + cover
+ * URLs signed with this install's salt), otherwise a takeover has nothing to
+ * hand to the player.
+ */
+@OptIn(UnstableApi::class)
+fun parseNavidromeSongJSON(
+    response: String,
+    navidromeUrl: String,
+    navidromeUsername: String,
+    navidromePassword: String
+): MediaItem? = signNavidromeSong(response, navidromeUrl, navidromeUsername, navidromePassword)?.toMediaItem()
+
+/**
+ * The part of [parseNavidromeSongJSON] that can be tested on the JVM: decode the
+ * envelope and stamp Subsonic credentials onto the stream/cover URLs.
+ *
+ * Kept separate because `toMediaItem()` needs a live `android.net.Uri`
+ * (`Uri.parse` is a stub under plain unit tests). Returns null for a `failed`
+ * envelope or a payload without a `song` node — the cases that used to surface
+ * as a bare "song not found" toast during takeover.
+ */
+fun signNavidromeSong(
+    response: String,
+    navidromeUrl: String,
+    navidromeUsername: String,
+    navidromePassword: String
+): MediaData.Song? {
+    val subsonicResponse = parseSubsonicResponse(response)
+    val song = subsonicResponse.song ?: return null
+
+    val salt = NavidromeDataSource.generateSalt(8)
+    val hash = NavidromeDataSource.md5Hash(navidromePassword + salt)
+
+    return song.copy(
+        media = "$navidromeUrl/rest/stream.view?&id=${song.navidromeID}&u=$navidromeUsername&t=$hash&s=$salt&v=1.12.0&c=Chora",
+        imageUrl = "$navidromeUrl/rest/getCoverArt.view?&id=${song.navidromeID}&u=$navidromeUsername&t=$hash&s=$salt&v=1.16.1&c=Chora&size=300"
+    )
+}
+
 @OptIn(UnstableApi::class)
 fun parseNavidromeSearch3JSON(
     response: String,

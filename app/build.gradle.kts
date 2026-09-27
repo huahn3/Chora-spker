@@ -115,8 +115,6 @@ dependencies {
 
     implementation(libs.androidx.navigation.compose)
 
-    implementation(libs.androidx.lifecycle.runtime.ktx)
-
     implementation(libs.reorderable)
     implementation(libs.androidx.media)
 
@@ -127,12 +125,14 @@ dependencies {
     implementation(libs.org.snakeyaml)
 
     implementation(libs.coil.compose)
-    implementation(libs.androidx.preference.ktx)
     implementation(libs.androidx.palette.ktx)
+    // Not referenced directly, but it brings androidx.appcompat transitively —
+    // AppearanceDialogs (both mobile and TV) uses AppCompatDelegate. Removing
+    // this "unused" dependency breaks the build.
+    implementation(libs.androidx.preference.ktx)
     implementation(libs.androidx.media3.exoplayer)
     implementation(libs.androidx.media3.session)
     implementation(libs.androidx.media3.ui)
-    implementation(libs.androidx.mediarouter)
     implementation(libs.androidx.material3.android)
     implementation(libs.androidx.datastore.preferences)
 

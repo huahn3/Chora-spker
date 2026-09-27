@@ -39,6 +39,7 @@ import com.craftworks.music.data.model.toMediaItem
 import com.craftworks.music.data.repository.AlbumRepository
 import com.craftworks.music.data.repository.ArtistRepository
 import com.craftworks.music.data.repository.LyricsRepository
+import com.craftworks.music.data.repository.LyricsState
 import com.craftworks.music.data.repository.PlaylistRepository
 import com.craftworks.music.data.repository.RadioRepository
 import com.craftworks.music.data.repository.SongRepository
@@ -93,6 +94,8 @@ class ChoraMediaLibraryService : MediaLibraryService() {
     private var scrobbleJob: Job? = null
     private var sleepTimerJob: Job? = null
     private var networkRecoveryJob: Job? = null
+    /** 10~15s `playing` heartbeat for Playback Handoff (TTL = remaining + 5s). */
+    private var playbackReportJob: Job? = null
     private var _sleepTimerRemainingTime = MutableStateFlow(0)
     val sleepTimerRemainingTime: StateFlow<Int> = _sleepTimerRemainingTime.asStateFlow()
 
@@ -114,6 +117,15 @@ class ChoraMediaLibraryService : MediaLibraryService() {
          *  settings flow hasn't published within the resolver's budget. */
         private const val NO_TRANSCODING = "No Transcoding"
         private const val DEFAULT_TRANSCODING_FORMAT = "mp3"
+
+        /** Redirect probe cache: [full URI -> (resolved URI, written-at millis)]. */
+        private const val REDIRECT_CACHE_TTL_MS = 5 * 60_000L
+        private const val REDIRECT_CACHE_MAX_ENTRIES = 32
+        private const val REDIRECT_CONNECT_TIMEOUT_MS = 1_500
+        private const val REDIRECT_READ_TIMEOUT_MS = 1_500
+
+        private val redirectCacheLock = Any()
+        private val redirectCache = LinkedHashMap<String, Pair<String, Long>>(8, 0.75f, true)
 
         fun getInstance(): ChoraMediaLibraryService? {
             return instance
@@ -229,6 +241,133 @@ class ChoraMediaLibraryService : MediaLibraryService() {
         else
             Log.d("AA", "MediaSession already initialized, not recreating")
     }
+
+    //region Playback Handoff reporting
+
+    /** Audible output right now: a remote Jukebox speaker id, or this device. */
+    private fun currentOutputDevice(): String =
+        if (JukeboxManager.isRemoteActive.value) JukeboxManager.selectedDeviceId.value else "browser"
+
+    /** Server vocabulary for the loop mode is `single` / `all` / `order`. */
+    private fun currentPlayMode(): String = when (player.repeatMode) {
+        Player.REPEAT_MODE_ONE -> "single"
+        Player.REPEAT_MODE_ALL -> "all"
+        else -> "order"
+    }
+
+    /**
+     * Volume a takeover should inherit. With a Jukebox speaker the local player
+     * is hard-muted, so `player.volume` would report 0 → clamped to 1% and the
+     * taking-over device would start almost silent. Report the speaker's own
+     * volume (kept in sync by [JukeboxManager]) in that case.
+     */
+    private fun currentVolumePercent(): Int =
+        if (JukeboxManager.isRemoteActive.value) JukeboxManager.deviceVolume.value.coerceIn(1, 100)
+        else (player.volume * 100f).toInt().coerceIn(1, 100)
+
+    /**
+     * Handoff metadata sent with every `reportPlayback`. Grouped so no call
+     * path can send half of it.
+     */
+    private data class HandoffFields(
+        val outputDevice: String,
+        val volume: Int,
+        val playMode: String,
+        val bilingualActive: Boolean
+    )
+
+    /**
+     * MUST be called on the player's thread (main): [currentPlayMode] and
+     * [currentVolumePercent] read ExoPlayer, which throws
+     * `IllegalStateException: Player is accessed on the wrong thread` from any
+     * other thread — and that is an uncaught crash, not a warning.
+     */
+    private fun captureHandoffFields() = HandoffFields(
+        outputDevice = currentOutputDevice(),
+        volume = currentVolumePercent(),
+        playMode = currentPlayMode(),
+        bilingualActive = LyricsState.isTranslationEnabled.value
+    )
+
+    /**
+     * Single funnel for every `/rest/reportPlayback` call so the handoff
+     * fields (outputDevice / volume / playMode / bilingualActive) can't be
+     * present on one code path and missing on another.
+     *
+     * Callers must be on the player's thread (main) — player callbacks and
+     * [serviceMainScope] qualify, [serviceIOScope] does not.
+     */
+    private fun reportPlaybackState(state: String, positionMs: Long) {
+        val mediaItem = player.currentMediaItem ?: return
+        val mediaId = mediaItem.mediaMetadata.extras?.getString("navidromeID")
+        if (mediaId.isNullOrBlank() || mediaId.startsWith("Local") ||
+            mediaItem.mediaMetadata.mediaType == MediaMetadata.MEDIA_TYPE_RADIO_STATION
+        ) return
+
+        val fields = captureHandoffFields()
+
+        serviceIOScope.launch {
+            songRepository.reportPlayback(
+                songId = mediaId,
+                state = state,
+                positionMs = positionMs,
+                outputDevice = fields.outputDevice,
+                volume = fields.volume,
+                playMode = fields.playMode,
+                bilingualActive = fields.bilingualActive
+            )
+        }
+    }
+
+    /**
+     * Inline variant of [reportPlaybackState] for callers that must report from
+     * inside their own coroutine (`onTaskRemoved` / `onDestroy` wrap it in
+     * `NonCancellable` + `withTimeoutOrNull`, `STATE_ENDED` reports the exact
+     * item that ended rather than re-reading the player). They still have to
+     * carry the handoff fields, otherwise the session another device reads
+     * loses its volume / output / mode.
+     *
+     * Called from IO coroutines, so the field snapshot hops to the player's
+     * thread: reading `player.volume` / `player.repeatMode` off it throws an
+     * uncaught `IllegalStateException` and kills the process.
+     */
+    private suspend fun reportPlaybackInline(songId: String, state: String, positionMs: Long) {
+        val fields = withContext(Dispatchers.Main) { captureHandoffFields() }
+        songRepository.reportPlayback(
+            songId = songId,
+            state = state,
+            positionMs = positionMs,
+            outputDevice = fields.outputDevice,
+            volume = fields.volume,
+            playMode = fields.playMode,
+            bilingualActive = fields.bilingualActive
+        )
+    }
+
+    /**
+     * 12s `playing` heartbeat. Session TTL is (remaining track + 5s), so a
+     * longer interval drops us out of the list before the song ends.
+     *
+     * Runs on [serviceMainScope] because it reads the player; the network call
+     * it triggers is dispatched to [serviceIOScope] by [reportPlaybackState].
+     */
+    private fun startPlaybackHeartbeat() {
+        if (playbackReportJob?.isActive == true) return
+        playbackReportJob = serviceMainScope.launch {
+            while (isActive) {
+                delay(12_000)
+                if (!player.isPlaying) break
+                reportPlaybackState("playing", player.currentPosition)
+            }
+        }
+    }
+
+    private fun stopPlaybackHeartbeat() {
+        playbackReportJob?.cancel()
+        playbackReportJob = null
+    }
+
+    //endregion
 
     @OptIn(UnstableApi::class)
     fun initializePlayer() {
@@ -369,7 +508,11 @@ class ChoraMediaLibraryService : MediaLibraryService() {
                 if (JukeboxManager.isRemoteActive.value) {
                     player.volume = 0f
                     if (!mediaId.isNullOrBlank() && !mediaId.startsWith("Local")) {
-                        JukeboxManager.playSong(mediaId, 0L)
+                        // A handoff takeover carries the victim's position in the
+                        // extras; without it the speaker would restart at 0:00
+                        // (the local item is created at 0 and seeked afterwards).
+                        val handoffStartMs = mediaMetadata.extras?.getLong("handoffStartMs", 0L) ?: 0L
+                        JukeboxManager.playSong(mediaId, handoffStartMs / 1000L)
                     }
                 }
 
@@ -377,9 +520,18 @@ class ChoraMediaLibraryService : MediaLibraryService() {
                     lyricsRepository.getLyrics(mediaMetadata)
                     if (mediaId != null && isPlayingNow) {
                         songRepository.scrobbleSong(mediaId, false)
-                        songRepository.reportPlayback(mediaId, "playing", 0)
                     }
                 }
+
+                if (isPlayingNow) {
+                    // Handoff: announce the new track, then settle into `playing`.
+                    // Kept on the main thread — reportPlaybackState reads the
+                    // player, and ExoPlayer throws on foreign threads.
+                    reportPlaybackState("starting", 0L)
+                    reportPlaybackState("playing", 0L)
+                }
+
+                if (isPlayingNow) startPlaybackHeartbeat() else stopPlaybackHeartbeat()
 
                 saveState(sync = false)
             }
@@ -412,15 +564,15 @@ class ChoraMediaLibraryService : MediaLibraryService() {
                 if (!mediaId.isNullOrBlank() && !mediaId.startsWith("Local") &&
                     mediaItem.mediaMetadata.mediaType != MediaMetadata.MEDIA_TYPE_RADIO_STATION
                 ) {
-                    serviceIOScope.launch {
-                        if (isPlaying) {
-                            songRepository.scrobbleSong(mediaId, false)
-                            songRepository.reportPlayback(mediaId, "playing", currentPosition)
-                        } else {
-                            songRepository.reportPlayback(mediaId, "paused", currentPosition)
-                        }
+                    if (isPlaying) {
+                        val id = mediaId
+                        serviceIOScope.launch { songRepository.scrobbleSong(id, false) }
                     }
+                    // Reports with the full handoff field set (output/volume/mode/bilingual).
+                    reportPlaybackState(if (isPlaying) "playing" else "paused", currentPosition)
                 }
+
+                if (isPlaying) startPlaybackHeartbeat() else stopPlaybackHeartbeat()
 
                 if (!isPlaying) {
                     saveState(sync = false)
@@ -448,10 +600,7 @@ class ChoraMediaLibraryService : MediaLibraryService() {
                     if (!mediaId.isNullOrBlank() && !mediaId.startsWith("Local") &&
                         mediaItem.mediaMetadata.mediaType != MediaMetadata.MEDIA_TYPE_RADIO_STATION
                     ) {
-                        serviceIOScope.launch {
-                            val state = if (isPlayingNow) "playing" else "paused"
-                            songRepository.reportPlayback(mediaId, state, pos)
-                        }
+                        reportPlaybackState(if (isPlayingNow) "playing" else "paused", pos)
                     }
                     saveState(sync = false)
                 }
@@ -465,11 +614,14 @@ class ChoraMediaLibraryService : MediaLibraryService() {
                     val mediaItem = player.currentMediaItem
                     val mediaId = mediaItem?.mediaMetadata?.extras?.getString("navidromeID")
                     val trackDuration = player.duration.coerceAtLeast(0L)
+                    stopPlaybackHeartbeat()
                     if (!mediaId.isNullOrBlank() && !mediaId.startsWith("Local") &&
                         mediaItem.mediaMetadata.mediaType != MediaMetadata.MEDIA_TYPE_RADIO_STATION
                     ) {
                         serviceIOScope.launch {
-                            songRepository.reportPlayback(mediaId, "stopped", trackDuration)
+                            // Inline variant: at STATE_ENDED the player may already
+                            // have auto-advanced, so report the id we captured above.
+                            reportPlaybackInline(mediaId, "stopped", trackDuration)
                         }
                     }
                     saveState(sync = false)
@@ -616,13 +768,13 @@ class ChoraMediaLibraryService : MediaLibraryService() {
                     tickCount++
                     if (tickCount % 10 == 0) {
                         val currentPosition = player.currentPosition
-                        val mediaId = mediaItem?.mediaMetadata?.extras?.getString("navidromeID")
-                        if (!mediaId.isNullOrBlank() && !mediaId.startsWith("Local") &&
-                            mediaItem.mediaMetadata.mediaType != MediaMetadata.MEDIA_TYPE_RADIO_STATION
-                        ) {
-                            serviceIOScope.launch {
-                                songRepository.reportPlayback(mediaId, "playing", currentPosition)
-                            }
+                        // Fallback heartbeat only: the dedicated 12s job normally
+                        // owns this. It used to call `reportPlayback` directly, so
+                        // every 10s it overwrote the server session with a payload
+                        // missing outputDevice/volume/playMode — the exact fields a
+                        // takeover inherits.
+                        if (playbackReportJob?.isActive != true) {
+                            reportPlaybackState("playing", currentPosition)
                         }
                         // saveState() is intentionally NOT called here: it rewrote
                         // up to 100 tracks to DataStore and POSTed the whole queue
@@ -680,74 +832,6 @@ class ChoraMediaLibraryService : MediaLibraryService() {
             super.onPostConnect(session, controller)
         }
 
-        /*
-        @OptIn(UnstableApi::class)
-        override fun onSetMediaItems(
-            mediaSession: MediaSession,
-            controller: MediaSession.ControllerInfo,
-            mediaItems: List<MediaItem>,
-            startIndex: Int,
-            startPositionMs: Long
-        ): ListenableFuture<MediaItemsWithStartPosition> {
-            // We need to use URI from requestMetaData because of https://github.com/androidx/media/issues/282
-            val updatedStartIndex =
-                SongHelper.currentTracklist.indexOfFirst { it.mediaId == mediaItems[0].mediaId }
-
-            val currentTracklist =
-                if (updatedStartIndex != -1) {
-                    SongHelper.currentTracklist
-                } else {
-                    SongHelper.currentTracklist = mediaItems.toMutableList()
-                    mediaItems
-                }
-
-            val connectivityManager =
-                this@ChoraMediaLibraryService.baseContext.getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
-
-            val networkCapabilities =
-                connectivityManager.getNetworkCapabilities(connectivityManager.activeNetwork)
-
-            val bitrate: String = runBlocking {
-                when {
-                    networkCapabilities?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true -> {
-                        Log.d("NetworkCheck", "Device is on Wi-Fi")
-                        playbackSettingsManager.wifiTranscodingBitrateFlow.first()
-                    }
-                    networkCapabilities?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true -> {
-                        Log.d("NetworkCheck", "Device is on Mobile Data")
-                        playbackSettingsManager.mobileDataTranscodingBitrateFlow.first()
-                    }
-                    else -> {
-                        Log.d("NetworkCheck", "Device is on another network type")
-                        playbackSettingsManager.wifiTranscodingBitrateFlow.first()
-                    }
-                }
-            }
-
-            val bitrateOptions = if (bitrate != "No Transcoding" && bitrate.isNotEmpty()) {
-                runBlocking {
-                    "&maxBitRate=$bitrate&format=${playbackSettingsManager.transcodingFormatFlow.first()}"
-                }
-            } else {
-                ""
-            }
-
-            val result = MediaItemsWithStartPosition(
-                currentTracklist.map { mediaItem ->
-                    MediaItem.Builder()
-                        .setMediaId(mediaItem.mediaId)
-                        .setMediaMetadata(mediaItem.mediaMetadata)
-                        .setUri(mediaItem.mediaId + if (mediaItem.mediaMetadata.extras?.getString("navidromeID")?.startsWith("Local_") == false) bitrateOptions else "")
-                        .build()
-                },
-                if (updatedStartIndex != -1) updatedStartIndex else startIndex,
-                startPositionMs
-            )
-
-            return Futures.immediateFuture(result)
-        }
-        */
-
         override fun onAddMediaItems(
             mediaSession: MediaSession,
             controller: MediaSession.ControllerInfo,
@@ -803,10 +887,11 @@ class ChoraMediaLibraryService : MediaLibraryService() {
             val navidromeID = currentItem.mediaMetadata.extras?.getString("navidromeID") ?: ""
             val newRating = (rating as StarRating).starRating.toInt()
 
-            runBlocking {
-                songRepository.setSongRating(navidromeID, newRating)
-            }
-
+            // Optimistic local update so the UI (lock screen / Android Auto / car
+            // projection) reflects the tap immediately; the server round trip is
+            // fired in the background. Doing it the old way — runBlocking around a
+            // network call inside this callback — stalled the MediaSession thread
+            // and delayed replaceMediaItem() until the server answered.
             val updatedExtras = Bundle(currentItem.mediaMetadata.extras ?: Bundle()).apply {
                 putInt("rating", newRating)
             }
@@ -823,7 +908,25 @@ class ChoraMediaLibraryService : MediaLibraryService() {
             if (player.currentMediaItem?.mediaMetadata?.extras?.getString("navidromeID") == navidromeID) {
                 player.replaceMediaItem(index, updatedItem)
             }
-            return super.onSetRating(session, controller, rating)
+
+            // `super.onSetRating` must be invoked on this frame: Kotlin forbids
+            // super-calls from inside the coroutine below.
+            val baseFuture = super.onSetRating(session, controller, rating)
+            val resultFuture = SettableFuture.create<SessionResult>()
+            serviceIOScope.launch {
+                try {
+                    songRepository.setSongRating(navidromeID, newRating)
+                } catch (e: Exception) {
+                    Log.w("MusicService", "setSongRating failed: ${e.message}")
+                }
+                try {
+                    resultFuture.set(baseFuture.get())
+                } catch (e: Exception) {
+                    // Never leave the session hanging on a failed future.
+                    resultFuture.set(SessionResult(SessionError.ERROR_INVALID_STATE))
+                }
+            }
+            return resultFuture
         }
 
         override fun onGetLibraryRoot(
@@ -1065,10 +1168,10 @@ class ChoraMediaLibraryService : MediaLibraryService() {
         // be runBlocking{ withTimeoutOrNull(2500) } inline here, freezing the UI
         // for up to 2.5s on every app swipe-away.
         if (!currentSongId.isNullOrBlank() && !currentSongId.startsWith("Local")) {
-            serviceIOScope.launch {
+            shutdownScope.launch {
                 withContext(NonCancellable) {
                     withTimeoutOrNull(2500) {
-                        runCatching { songRepository.reportPlayback(currentSongId, "paused", currentPos) }
+                        runCatching { reportPlaybackInline(currentSongId, "paused", currentPos) }
                             .onFailure { Log.e("SERVICE", "Error reporting pause in onTaskRemoved", it) }
                     }
                 }
@@ -1091,11 +1194,14 @@ class ChoraMediaLibraryService : MediaLibraryService() {
         }
 
         // Fire-and-forget: onDestroy must not block the main thread on network.
+        // shutdownScope (not serviceIOScope) because that one is cancelled at the
+        // bottom of this method — the report would die with it, and other devices
+        // would keep showing this session as "playing" until the TTL lapses.
         if (!currentSongId.isNullOrBlank() && !currentSongId.startsWith("Local")) {
-            serviceIOScope.launch {
+            shutdownScope.launch {
                 withContext(NonCancellable) {
                     withTimeoutOrNull(2500) {
-                        runCatching { songRepository.reportPlayback(currentSongId, "paused", currentPos) }
+                        runCatching { reportPlaybackInline(currentSongId, "paused", currentPos) }
                             .onFailure { Log.e("SERVICE", "Error reporting pause in onDestroy", it) }
                     }
                 }
@@ -1373,7 +1479,24 @@ class ChoraMediaLibraryService : MediaLibraryService() {
     }
 
     private fun followHttpRedirects(initialUri: Uri): Uri {
+        // Every stream load used to open a brand-new TCP + TLS handshake and fire a HEAD
+        // probe before ExoPlayer opened its own connection — a pure extra round trip on
+        // each track start, and up to 30s of blocking (5 hops x 3s connect + 3s read)
+        // on the loader thread when a proxy was slow. Redirect targets are effectively
+        // static, so remember the answer briefly and skip the probe entirely.
+        val cacheKey = initialUri.toString()
+        synchronized(redirectCacheLock) {
+            redirectCache[cacheKey]?.let { (target, ts) ->
+                if (System.currentTimeMillis() - ts < REDIRECT_CACHE_TTL_MS) {
+                    Log.d("MusicService", "followHttpRedirects cache hit for $cacheKey")
+                    return Uri.parse(target)
+                }
+            }
+        }
+
         var currentUri = initialUri
+        var redirectFollowed = false
+        var sawError = false
         for (hop in 0 until 5) {
             val scheme = currentUri.scheme?.lowercase()
             if (scheme != "http" && scheme != "https") break
@@ -1381,8 +1504,8 @@ class ChoraMediaLibraryService : MediaLibraryService() {
                 val conn = (java.net.URI(currentUri.toString()).toURL().openConnection() as java.net.HttpURLConnection).apply {
                     instanceFollowRedirects = false
                     requestMethod = "HEAD"
-                    connectTimeout = 3000
-                    readTimeout = 3000
+                    connectTimeout = REDIRECT_CONNECT_TIMEOUT_MS
+                    readTimeout = REDIRECT_READ_TIMEOUT_MS
                     if (this is javax.net.ssl.HttpsURLConnection) {
                         val server = NavidromeManager.getCurrentServer()
                         if (server?.allowSelfSignedCert == true) {
@@ -1404,12 +1527,13 @@ class ChoraMediaLibraryService : MediaLibraryService() {
                     conn.disconnect()
                     if (!location.isNullOrBlank()) {
                         val targetUri = java.net.URI(location)
-                        val resolved = if (targetUri.isAbsolute) targetUri else java.net.URI(currentUri.toString()).resolve(targetUri)
-                        Log.d("MusicService", "followHttpRedirects hop $hop: $currentUri -> $resolved")
-                        currentUri = Uri.parse(resolved.toString())
+                        val hopTarget = if (targetUri.isAbsolute) targetUri else java.net.URI(currentUri.toString()).resolve(targetUri)
+                        Log.d("MusicService", "followHttpRedirects hop $hop: $currentUri -> $hopTarget")
+                        currentUri = Uri.parse(hopTarget.toString())
+                        redirectFollowed = true
 
-                        val portPart = if (resolved.port != -1) ":${resolved.port}" else ""
-                        val resolvedOrigin = "${resolved.scheme}://${resolved.host}$portPart".trimEnd('/')
+                        val portPart = if (hopTarget.port != -1) ":${hopTarget.port}" else ""
+                        val resolvedOrigin = "${hopTarget.scheme}://${hopTarget.host}$portPart".trimEnd('/')
                         val server = NavidromeManager.getCurrentServer()
                         if (server != null && server.activeBaseUrl != resolvedOrigin) {
                             server.activeBaseUrl = resolvedOrigin
@@ -1423,8 +1547,26 @@ class ChoraMediaLibraryService : MediaLibraryService() {
                 conn.disconnect()
                 break
             } catch (e: Exception) {
+                // Don't cache a failed probe — a transient timeout would otherwise be
+                // pinned for the whole TTL and block a legitimately moved server.
+                sawError = true
                 Log.w("MusicService", "followHttpRedirects exception: ${e.message}")
                 break
+            }
+        }
+
+        if (!sawError) {
+            synchronized(redirectCacheLock) {
+                redirectCache[cacheKey] = currentUri.toString() to System.currentTimeMillis()
+                while (redirectCache.size > REDIRECT_CACHE_MAX_ENTRIES) {
+                    val eldest = redirectCache.keys.iterator()
+                    if (!eldest.hasNext()) break
+                    eldest.next()
+                    eldest.remove()
+                }
+            }
+            if (redirectFollowed) {
+                Log.d("MusicService", "followHttpRedirects resolved $cacheKey -> $currentUri")
             }
         }
         return currentUri

@@ -68,8 +68,10 @@ import com.craftworks.music.R
 import com.craftworks.music.data.model.Screen
 import com.craftworks.music.managers.settings.AppTheme
 import com.craftworks.music.managers.settings.AppearanceSettingsManager
+import com.craftworks.music.managers.settings.MiniPlayerButtonLayout
 import com.craftworks.music.ui.elements.dialogs.BackgroundDialog
 import com.craftworks.music.ui.elements.dialogs.HomeItemsDialog
+import com.craftworks.music.ui.elements.dialogs.MiniPlayerButtonLayoutDialog
 import com.craftworks.music.ui.elements.dialogs.NameDialog
 import com.craftworks.music.ui.elements.dialogs.NavbarItemsDialog
 import com.craftworks.music.ui.elements.dialogs.NowPlayingTitleAlignmentDialog
@@ -91,6 +93,7 @@ fun S_AppearanceScreen(navHostController: NavHostController = rememberNavControl
     var showNowPlayingTitleAlignmentDialog by remember { mutableStateOf(false) }
     var showNowPlayingLyricsAlignmentDialog by remember { mutableStateOf(false) }
     var showPageTransitionDialog by remember { mutableStateOf(false) }
+    var showMiniPlayerButtonsDialog by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
@@ -109,6 +112,16 @@ fun S_AppearanceScreen(navHostController: NavHostController = rememberNavControl
         NowPlayingAlignment.LEFT to R.string.NowPlayingTitleAlignment_Left,
         NowPlayingAlignment.CENTER to R.string.NowPlayingTitleAlignment_Center,
         NowPlayingAlignment.RIGHT to R.string.NowPlayingTitleAlignment_Right
+    )
+
+    // Mini Player Button Layout (left paired / symmetric / right paired)
+    val miniPlayerButtonLayout by rememberAppearanceSettings().miniPlayerButtonLayoutFlow.collectAsState(
+        MiniPlayerButtonLayout.SYMMETRIC
+    )
+    val miniPlayerButtonLayoutLabels = mapOf(
+        MiniPlayerButtonLayout.LEFT_PAIRED to R.string.MiniPlayerButtons_LeftPaired,
+        MiniPlayerButtonLayout.SYMMETRIC to R.string.MiniPlayerButtons_Symmetric,
+        MiniPlayerButtonLayout.RIGHT_PAIRED to R.string.MiniPlayerButtons_RightPaired
     )
 
     Scaffold(
@@ -349,6 +362,19 @@ fun S_AppearanceScreen(navHostController: NavHostController = rememberNavControl
                         ImageVector.vectorResource(R.drawable.rounded_sort_24),
                         toggleEvent = {
                             showNowPlayingTitleAlignmentDialog = true
+                        }
+                    )
+
+                    // Mini Player Buttons Layout
+                    SettingsDialogButton(
+                        stringResource(R.string.Setting_MiniPlayerButtons),
+                        stringResource(
+                            miniPlayerButtonLayoutLabels[miniPlayerButtonLayout]
+                                ?: R.string.MiniPlayerButtons_Symmetric
+                        ),
+                        ImageVector.vectorResource(R.drawable.s_a_mini_player_buttons),
+                        toggleEvent = {
+                            showMiniPlayerButtonsDialog = true
                         }
                     )
                 }
@@ -603,6 +629,18 @@ fun S_AppearanceScreen(navHostController: NavHostController = rememberNavControl
                 onSet = { style ->
                     coroutineScope.launch {
                         AppearanceSettingsManager(context).setPageTransitionStyle(style)
+                    }
+                }
+            )
+
+        if(showMiniPlayerButtonsDialog)
+            MiniPlayerButtonLayoutDialog(
+                setShowDialog = { showMiniPlayerButtonsDialog = it },
+                title = stringResource(R.string.Setting_MiniPlayerButtons),
+                selection = miniPlayerButtonLayout,
+                onSet = { layout ->
+                    coroutineScope.launch {
+                        AppearanceSettingsManager(context).setMiniPlayerButtonLayout(layout)
                     }
                 }
             )

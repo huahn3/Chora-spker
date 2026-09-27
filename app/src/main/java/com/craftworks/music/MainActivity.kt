@@ -129,6 +129,7 @@ import com.craftworks.music.player.rememberManagedMediaController
 import com.craftworks.music.ui.elements.dialogs.tv.OnboardingDialog
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.craftworks.music.managers.settings.LocalDataSettingsManager
+import com.craftworks.music.managers.settings.rememberLocalDataSettings
 import com.craftworks.music.ui.elements.dialogs.AddSongToPlaylist
 import com.craftworks.music.ui.elements.dialogs.JukeboxDeviceBottomSheet
 import com.craftworks.music.ui.elements.dialogs.showAddSongToPlaylistDialog
@@ -170,7 +171,10 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
 
         setContent {
-            val selectedThemeName by remember { AppearanceSettingsManager(this) }.appTheme.collectAsState(
+            // Single shared instance for the whole tree — this block used to build
+            // one manager for the theme and a second one for cover theming.
+            val appearanceSettings = remember { AppearanceSettingsManager(this) }
+            val selectedThemeName by appearanceSettings.appTheme.collectAsState(
                 AppTheme.SYSTEM.name
             )
             val darkTheme = when (selectedThemeName) {
@@ -179,7 +183,7 @@ class MainActivity : ComponentActivity() {
                 else -> isSystemInDarkTheme()
             }
 
-            val coverColorMode by remember { AppearanceSettingsManager(this) }.coverThemeFlow.collectAsStateWithLifecycle(true)
+            val coverColorMode by appearanceSettings.coverThemeFlow.collectAsStateWithLifecycle(true)
 
             MusicPlayerTheme (darkTheme, coverColorMode = coverColorMode) {
                 navController = rememberNavController()
@@ -192,10 +196,11 @@ class MainActivity : ComponentActivity() {
                 val coroutineScope = rememberCoroutineScope()
 
                 // Fast-load playback resumption metadata immediately on startup so mini player appears instantly
+                val startupResumption = rememberLocalDataSettings()
                 LaunchedEffect(Unit) {
                     if (metadata == null) {
                         try {
-                            val resumption = LocalDataSettingsManager(applicationContext)
+                            val resumption = startupResumption
                                 .playbackResumptionPlaylistWithStartPosition.firstOrNull()
                             if (metadata == null && resumption != null && resumption.mediaItems.isNotEmpty()) {
                                 val idx = resumption.startIndex.coerceIn(0, resumption.mediaItems.size - 1)
@@ -643,7 +648,7 @@ class MainActivity : ComponentActivity() {
             svc.saveState(sync = false)
         }
         stopService(Intent(this, ChoraMediaLibraryService::class.java))
-        println("Destroyed, Goodbye :(")
+        Log.d("MainActivity", "Destroyed, Goodbye :(")
         super.onDestroy()
     }
 }
@@ -872,7 +877,10 @@ fun AnimatedBottomNavBar(
     val backStackEntry by navController.currentBackStackEntryAsState()
     val context = LocalContext.current
 
-    val orderedNavItems = AppearanceSettingsManager(context).bottomNavItemsFlow.collectAsState(
+    // remembered: AnimatedBottomNavBar takes paletteColors, so it recomposes on
+    // every track change — recreating the manager (and its DataStore flow chain)
+    // each time would re-subscribe the collector on every song.
+    val orderedNavItems = remember(context) { AppearanceSettingsManager(context) }.bottomNavItemsFlow.collectAsState(
         initial = listOf(
             BottomNavItem(
                 "Home", R.drawable.rounded_home_24, "home_screen"
@@ -971,7 +979,7 @@ fun AnimatedBottomNavBar(
                         ), FadingEdgesGravity.All, 64.dp
                     )
             ) {
-                items(orderedNavItems) { item ->
+                items(orderedNavItems, key = { it.screenRoute }) { item ->
                     if (!item.enabled) return@items
 
                     val icon = NavItems.iconFor(item.screenRoute)

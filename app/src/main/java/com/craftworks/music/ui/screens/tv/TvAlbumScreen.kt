@@ -152,7 +152,7 @@ fun TvAlbumScreen(
                 }
             }
         }
-        items(albums) { album ->
+        items(albums, key = { it.mediaId }) { album ->
             TvAlbumCard(
                 album = album,
                 modifier = Modifier.onFocusChanged {

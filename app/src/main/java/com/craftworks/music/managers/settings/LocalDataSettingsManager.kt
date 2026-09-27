@@ -156,7 +156,7 @@ class LocalDataSettingsManager @Inject constructor(
                 MediaSession.MediaItemsWithStartPosition(emptyList(), 0, 0L)
             }
         }
-    }
+    }.distinctUntilChanged()
 
     val sortAlbumOrder: Flow<SortOrder> =
         context.dataStore.data.map { preferences ->

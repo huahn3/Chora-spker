@@ -298,7 +298,7 @@ fun PlaylistDetails(
                 }
             }
 
-            items(playlistSongs) { song ->
+            items(playlistSongs, key = { it.mediaId }) { song ->
                 HorizontalSongCard(
                     song = song,
                     modifier = Modifier.animateItem(),

@@ -6,6 +6,7 @@ import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.ImageDecoder
 import android.os.Build
+import android.util.Log
 import androidx.core.graphics.createBitmap
 import androidx.core.graphics.scale
 import androidx.core.net.toUri
@@ -15,6 +16,8 @@ import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
+
+private const val TAG = "LOCAL_PLAYLIST_ART"
 
 /**
  * Generates a bitmap for playlist cover art by combining up to 4 album art images.
@@ -27,8 +30,7 @@ import java.net.URL
  * @return Uri pointing to the saved image file, or null if generation failed
  */
 suspend fun localPlaylistImageGenerator(songs: List<MediaItem>, context: Context): ByteArray? {
-    println("Creating Playlist Cover Art")
-    println("songs: ${songs.map { it.mediaMetadata.title }}")
+    Log.d(TAG, "Creating playlist cover art from ${songs.size} songs")
     if (songs.isEmpty()) return null
 
     // Determine grid size
@@ -52,8 +54,7 @@ suspend fun localPlaylistImageGenerator(songs: List<MediaItem>, context: Context
                     maxHeight = maxOf(maxHeight, bitmap.height)
                 }
             } catch (e: Exception) {
-                println("Error loading image for song: ${song.mediaMetadata.artworkUri}")
-                e.printStackTrace()
+                Log.w(TAG, "Error loading image for song: ${song.mediaMetadata.artworkUri}")
                 // Continue with other images
             }
         }
@@ -112,7 +113,7 @@ suspend fun localPlaylistImageGenerator(songs: List<MediaItem>, context: Context
             }
         }
 
-        println("Playlist Cover Art Generated Successfully!")
+        Log.d(TAG, "Playlist cover art generated successfully")
         val stream = ByteArrayOutputStream()
         combinedBitmap.compress(Bitmap.CompressFormat.PNG, 90, stream)
         return stream.toByteArray()
@@ -177,7 +178,7 @@ private suspend fun loadBitmapFromUrl(imageUrl: String, context: Context): Bitma
             }
         }
     } catch (e: Exception) {
-        println("Failed to load image from $imageUrl: ${e.message}")
+        Log.w(TAG, "Failed to load image from $imageUrl: ${e.message}")
         null
     }
 }

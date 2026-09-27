@@ -64,6 +64,15 @@
     <string name="NowPlayingTitleAlignment_Left">На Левой Стороне</string>
     <string name="NowPlayingTitleAlignment_Center">В Центре</string>
     <string name="NowPlayingTitleAlignment_Right">На Правой Стороне</string>
+
+    <!-- Mini Player Button Layout -->
+    <string name="Setting_MiniPlayerButtons">Кнопки мини-плеера</string>
+    <string name="MiniPlayerButtons_LeftPaired">Слева рядом</string>
+    <string name="MiniPlayerButtons_Symmetric">Симметрично</string>
+    <string name="MiniPlayerButtons_RightPaired">Справа рядом</string>
+    <string name="MiniPlayerButtons_LeftPaired_Desc">Обложка и устройство вывода рядом слева — удобнее левым большим пальцем</string>
+    <string name="MiniPlayerButtons_Symmetric_Desc">Обложка слева, устройство вывода справа (по умолчанию)</string>
+    <string name="MiniPlayerButtons_RightPaired_Desc">Обложка и устройство вывода рядом справа — удобнее правым большим пальцем</string>
     <!-- Now Playing Title Alignment -->
     <string name="Dialog_SetSleepTimer">Поставить Таймер Сна</string>
 </resources>

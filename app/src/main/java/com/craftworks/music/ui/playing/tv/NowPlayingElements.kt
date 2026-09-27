@@ -55,6 +55,7 @@ import androidx.media3.common.Timeline
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaController
 import com.craftworks.music.managers.settings.LocalDataSettingsManager
+import com.craftworks.music.managers.settings.rememberLocalDataSettings
 import kotlinx.coroutines.flow.firstOrNull
 import androidx.media3.ui.compose.state.rememberNextButtonState
 import androidx.media3.ui.compose.state.rememberPlayPauseButtonState
@@ -125,9 +126,10 @@ fun PlaybackProgressSlider(
     var isPlaying by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
+    val localDataSettings = rememberLocalDataSettings()
     LaunchedEffect(mediaController, metadata) {
         if (currentValue == 0L) {
-            val resumption = LocalDataSettingsManager(context)
+            val resumption = localDataSettings
                 .playbackResumptionPlaylistWithStartPosition.firstOrNull()
             if (resumption != null && resumption.startPositionMs > 0L && currentValue == 0L) {
                 currentValue = resumption.startPositionMs

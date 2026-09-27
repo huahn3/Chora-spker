@@ -1,5 +1,6 @@
 package com.craftworks.music.ui.elements.dialogs
 
+import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Spring
@@ -38,25 +39,35 @@ import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.core.net.toUri
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.session.MediaController
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import com.craftworks.music.R
 import com.craftworks.music.data.model.JukeboxDevice
+import com.craftworks.music.data.model.PlaybackSessionDto
 import com.craftworks.music.managers.JukeboxManager
+import com.craftworks.music.managers.PlaybackHandoffManager
 import com.craftworks.music.player.ChoraMediaLibraryService
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -75,12 +86,29 @@ fun JukeboxDeviceBottomSheet(
     val deviceVolume by JukeboxManager.deviceVolume.collectAsStateWithLifecycle()
     val isLoading by JukeboxManager.isLoading.collectAsStateWithLifecycle()
 
+    // Other devices' live sessions (Playback Handoff). Our own row is filtered
+    // out — taking over yourself is a no-op.
+    val handoffSessions by PlaybackHandoffManager.sessions.collectAsStateWithLifecycle()
+    val takeoverInFlight by PlaybackHandoffManager.takeoverInFlight.collectAsStateWithLifecycle()
+    val otherSessions = handoffSessions.filter { !it.isCurrentSession }
+        .sortedBy { it.sessionId }
+
     LaunchedEffect(Unit) {
         // checkActiveServers() + device fetch do disk/network work: keep it off the
         // main thread so the sheet enter animation doesn't stutter.
         withContext(Dispatchers.IO) {
             JukeboxManager.refreshDevices()
+            PlaybackHandoffManager.refreshSessions()
         }
+        // Live-ish list while the sheet is open; the 12s `playing` heartbeat
+        // from each device keeps these rows fresh server-side.
+        PlaybackHandoffManager.startPolling(intervalMs = 5_000L)
+        // The dock chip reads the same list, so re-arm the ambient poller in
+        // case it self-disabled on a server that was offline earlier.
+        PlaybackHandoffManager.startAmbientPolling()
+    }
+    DisposableEffect(Unit) {
+        onDispose { PlaybackHandoffManager.stopPolling() }
     }
 
     ModalBottomSheet(
@@ -179,6 +207,47 @@ fun JukeboxDeviceBottomSheet(
             }
 
             Spacer(modifier = Modifier.height(2.dp))
+
+            // 其他设备正在播放 (Playback Handoff / Takeover)
+            if (otherSessions.isNotEmpty()) {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(
+                        text = "其他设备正在播放",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    otherSessions.forEach { session ->
+                        HandoffSessionRow(
+                            session = session,
+                            isTakingOver = takeoverInFlight == session.sessionId,
+                            onClick = {
+                                val service = ChoraMediaLibraryService.getInstance()
+                                val repo = service?.songRepository
+                                if (repo == null) {
+                                    Toast.makeText(
+                                        context,
+                                        "播放器尚未就绪，无法接管",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                    return@HandoffSessionRow
+                                }
+                                PlaybackHandoffManager.takeover(
+                                    session = session,
+                                    context = context,
+                                    songRepository = repo,
+                                    forcePlay = session.state == "playing"
+                                )
+                            }
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(2.dp))
+            }
 
             // Remote Volume Slider Section (Visible when streaming to a remote device)
             AnimatedVisibility(
@@ -352,5 +421,135 @@ private fun DeviceRowItem(
                 )
             }
         }
+    }
+}
+
+/**
+ * One row of "other devices are playing" in the output-device sheet.
+ * Tapping it takes the session over (seek to `positionMs`, inherit the 6
+ * dimensions, then let the server pause the victim).
+ */
+@Composable
+private fun HandoffSessionRow(
+    session: PlaybackSessionDto,
+    isTakingOver: Boolean,
+    onClick: () -> Unit
+) {
+    val rowShape = RoundedCornerShape(18.dp)
+    val paused = session.state != "playing"
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(rowShape)
+            .background(MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.4f))
+            .border(
+                1.5.dp,
+                MaterialTheme.colorScheme.primary.copy(alpha = 0.18f),
+                rowShape
+            )
+            .clickable(enabled = !isTakingOver, onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(13.dp),
+            modifier = Modifier.weight(1f)
+        ) {
+            val rowContext = LocalContext.current
+            val coverUrl = session.coverArtUrl
+            // Keyed on the asset id, never on coverUrl: the signed URL carries a
+            // fresh salt on every poll, so a URL cache key would re-download the
+            // same picture every few seconds.
+            val coverCacheKey = "handoff_cover_" + (session.coverArtId ?: session.songId)
+            // A 404/401 or a self-signed TLS failure must not leave a blank disc
+            // behind — fall back to the speaker glyph.
+            var coverFailed by remember(coverCacheKey) { mutableStateOf(false) }
+            Box(
+                modifier = Modifier
+                    .size(42.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)),
+                contentAlignment = Alignment.Center
+            ) {
+                if (coverUrl != null && !coverFailed) {
+                    AsyncImage(
+                        model = ImageRequest.Builder(rowContext)
+                            .data(coverUrl.toUri())
+                            .memoryCacheKey(coverCacheKey)
+                            .diskCacheKey(coverCacheKey)
+                            .crossfade(true)
+                            .build(),
+                        contentDescription = "封面",
+                        contentScale = ContentScale.Crop,
+                        onError = { coverFailed = true },
+                        modifier = Modifier.matchParentSize()
+                    )
+                } else if (!isTakingOver) {
+                    Icon(
+                        imageVector = ImageVector.vectorResource(R.drawable.rounded_speaker_24),
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(21.dp)
+                    )
+                }
+                if (isTakingOver) {
+                    Box(
+                        modifier = Modifier
+                            .matchParentSize()
+                            .background(Color.Black.copy(alpha = 0.45f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp,
+                            color = Color.White
+                        )
+                    }
+                }
+            }
+
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = session.title,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1
+                )
+                Text(
+                    text = "${session.playerName?.takeIf { it.isNotBlank() } ?: session.username} · ${session.artist}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1
+                )
+                val totalSec = session.positionMs / 1000
+                Text(
+                    text = "%02d:%02d / %02d:%02d  ·  %s".format(
+                        totalSec / 60, totalSec % 60,
+                        session.duration / 60, session.duration % 60,
+                        if (paused) "已暂停" else "正在播放"
+                    ),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                )
+                if (session.outputDevice != "browser" && session.outputDevice != "local") {
+                    Text(
+                        text = "输出: ${session.outputDevice}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.85f)
+                    )
+                }
+            }
+        }
+
+        Text(
+            text = "接管",
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.primary
+        )
     }
 }

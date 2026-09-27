@@ -1,5 +1,6 @@
 package com.craftworks.music.ui.playing
 
+import android.net.Uri
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationVector1D
@@ -74,6 +75,9 @@ import coil.request.ImageRequest
 import com.craftworks.music.R
 import com.craftworks.music.data.repository.LyricsState
 import com.craftworks.music.managers.settings.LocalDataSettingsManager
+import com.craftworks.music.managers.settings.MiniPlayerButtonLayout
+import com.craftworks.music.managers.settings.rememberAppearanceSettings
+import com.craftworks.music.managers.settings.rememberLocalDataSettings
 import com.craftworks.music.player.ChoraMediaLibraryService
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.firstOrNull
@@ -114,10 +118,11 @@ fun NowPlayingMiniPlayer(
     var lastActionTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
 
     val context = LocalContext.current
+    val localDataSettings = rememberLocalDataSettings()
     // Fast-load saved position if player hasn't sought yet on cold start
     LaunchedEffect(player, metadata) {
         if (currentPosition == 0L) {
-            val resumption = LocalDataSettingsManager(context)
+            val resumption = localDataSettings
                 .playbackResumptionPlaylistWithStartPosition.firstOrNull()
             if (resumption != null && resumption.startPositionMs > 0L && currentPosition == 0L) {
                 currentPosition = resumption.startPositionMs
@@ -216,6 +221,74 @@ fun NowPlayingMiniPlayer(
     val nextLyric = lyrics.getOrNull(activeLyricIndex + 1)
     val nextLyricText = nextLyric?.text?.firstOrNull { it.isNotBlank() }
 
+    val miniPlayerButtonLayout by rememberAppearanceSettings()
+        .miniPlayerButtonLayoutFlow
+        .collectAsStateWithLifecycle(MiniPlayerButtonLayout.SYMMETRIC)
+
+    // Progress ring needs a multi-level duration fallback: a bare
+    // `coerceAtLeast(1L)` renders a false "100% played" full circle on cold start.
+    val effectiveDuration = when {
+        duration > 1000L -> duration
+        metaDurationMs > 1000L -> metaDurationMs
+        else -> 0L
+    }
+    val progress = if (effectiveDuration > 0L) {
+        (currentPosition.toFloat() / effectiveDuration.toFloat()).coerceIn(0f, 1f)
+    } else {
+        0f
+    }
+
+    // Play / Pause overlay on the cover: visible for 3s on start/action, then fades out.
+    val controlsAlpha by animateFloatAsState(
+        targetValue = if (showControls) 1f else 0f,
+        animationSpec = tween(300),
+        label = "ControlsAlpha"
+    )
+
+    val coverArt: @Composable (Modifier) -> Unit = { coverModifier ->
+        MiniPlayerCoverArt(
+            artworkUri = metadata?.artworkUri,
+            songId = songId,
+            progress = progress,
+            isPlaying = isPlaying,
+            controlsAlpha = controlsAlpha,
+            onClick = {
+                // Tapping cover toggles play/pause even when icon is hidden, resets 3s timer
+                lastActionTime = System.currentTimeMillis()
+                player?.let {
+                    if (it.isPlaying) it.pause() else it.play()
+                }
+            },
+            onLongClick = { onQueueClick.invoke() },
+            modifier = coverModifier
+        )
+    }
+
+    val centerText: @Composable (Modifier) -> Unit = { textModifier ->
+        MiniPlayerCenterText(
+            isPlaying = isPlaying,
+            currentLyricText = currentLyricText,
+            nextLyricText = nextLyricText,
+            metadata = metadata,
+            active = active,
+            dragX = dragX,
+            swipeDir = swipeDir,
+            modifier = textModifier
+        )
+    }
+
+    val outputChip: @Composable () -> Unit = {
+        // Output device (Jukebox) button — same 52dp footprint as the
+        // album-art circle, larger icon to match.
+        OutputDeviceButton(
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            size = 26.dp,
+            iconAlpha = 1f,
+            chip = true,
+            onClick = onOutputDeviceClick
+        )
+    }
+
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
@@ -224,115 +297,198 @@ fun NowPlayingMiniPlayer(
             .clickable { onClick.invoke() }
             .padding(horizontal = 12.dp)
     ) {
-        // Album Art with Circular Progress & Play/Pause overlay
-        // Tap toggles playback, long-press opens the play queue
-        Box(
-            contentAlignment = Alignment.Center,
-            modifier = Modifier
-                .size(52.dp)
-                .clip(CircleShape)
-                .combinedClickable(
-                    onClick = {
-                        // Tapping cover toggles play/pause even when icon is hidden, resets 3s timer
-                        lastActionTime = System.currentTimeMillis()
-                        player?.let {
-                            if (it.isPlaying) it.pause() else it.play()
-                        }
-                    },
-                    onLongClick = { onQueueClick.invoke() }
-                )
-        ) {
-            // Circular progress ring tracking playback
-            val effectiveDuration = when {
-                duration > 1000L -> duration
-                metaDurationMs > 1000L -> metaDurationMs
-                else -> 0L
+        when (miniPlayerButtonLayout) {
+            // Both buttons grouped at the leading edge for left-thumb reach.
+            MiniPlayerButtonLayout.LEFT_PAIRED -> {
+                coverArt(Modifier)
+                Spacer(Modifier.width(4.dp))
+                outputChip()
+                Spacer(Modifier.width(12.dp))
+                centerText(Modifier.weight(1f))
             }
-            val progress = if (effectiveDuration > 0L) {
-                (currentPosition.toFloat() / effectiveDuration.toFloat()).coerceIn(0f, 1f)
-            } else {
-                0f
-            }
-            CircularProgressIndicator(
-                progress = { progress },
-                modifier = Modifier.size(48.dp),
-                color = MaterialTheme.colorScheme.primary,
-                trackColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
-                strokeWidth = 2.5.dp
-            )
 
-            // Round album cover
-            SubcomposeAsyncImage(
-                model = ImageRequest.Builder(LocalContext.current)
-                    .data(metadata?.artworkUri)
-                    .diskCacheKey(songId)
-                    .crossfade(true)
-                    .build(),
-                contentDescription = "Album Cover",
-                contentScale = ContentScale.Crop,
-                alignment = Alignment.Center,
+            // Classic: album art pinned left, output chip pinned right.
+            MiniPlayerButtonLayout.SYMMETRIC -> {
+                coverArt(Modifier)
+                centerText(Modifier.weight(1f).padding(horizontal = 12.dp))
+                outputChip()
+            }
+
+            // Both buttons grouped at the trailing edge for right-thumb reach.
+            MiniPlayerButtonLayout.RIGHT_PAIRED -> {
+                centerText(Modifier.weight(1f))
+                Spacer(Modifier.width(12.dp))
+                coverArt(Modifier)
+                Spacer(Modifier.width(4.dp))
+                outputChip()
+            }
+        }
+    }
+}
+
+/**
+ * Album art with circular progress ring and play/pause overlay.
+ * 52dp footprint so it lines up with the output device chip in every layout.
+ */
+@Composable
+private fun MiniPlayerCoverArt(
+    artworkUri: Uri?,
+    songId: String?,
+    progress: Float,
+    isPlaying: Boolean,
+    controlsAlpha: Float,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = modifier
+            .size(52.dp)
+            .clip(CircleShape)
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick
+            )
+    ) {
+        // Circular progress ring tracking playback
+        CircularProgressIndicator(
+            progress = { progress },
+            modifier = Modifier.size(48.dp),
+            color = MaterialTheme.colorScheme.primary,
+            trackColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+            strokeWidth = 2.5.dp
+        )
+
+        // Round album cover
+        SubcomposeAsyncImage(
+            model = ImageRequest.Builder(LocalContext.current)
+                .data(artworkUri)
+                .diskCacheKey(songId)
+                .crossfade(true)
+                .build(),
+            contentDescription = "Album Cover",
+            contentScale = ContentScale.Crop,
+            alignment = Alignment.Center,
+            modifier = Modifier
+                .size(42.dp)
+                .clip(CircleShape)
+        )
+
+        if (controlsAlpha > 0.01f) {
+            Box(
+                contentAlignment = Alignment.Center,
                 modifier = Modifier
                     .size(42.dp)
                     .clip(CircleShape)
-            )
-
-            // Play / Pause Overlay Icon (Visible for 3s on start/action, then fades out smoothly)
-            val controlsAlpha by animateFloatAsState(
-                targetValue = if (showControls) 1f else 0f,
-                animationSpec = tween(300),
-                label = "ControlsAlpha"
-            )
-
-            if (controlsAlpha > 0.01f) {
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier
-                        .size(42.dp)
-                        .clip(CircleShape)
-                        .graphicsLayer { alpha = controlsAlpha }
-                        .background(Color.Black.copy(alpha = 0.45f))
-                ) {
-                    Icon(
-                        imageVector = if (isPlaying) {
-                            ImageVector.vectorResource(R.drawable.media3_notification_pause)
-                        } else {
-                            Icons.Rounded.PlayArrow
-                        },
-                        contentDescription = if (isPlaying) "Pause" else "Play",
-                        tint = Color.White,
-                        modifier = Modifier.size(24.dp)
-                    )
-                }
+                    .graphicsLayer { alpha = controlsAlpha }
+                    .background(Color.Black.copy(alpha = 0.45f))
+            ) {
+                Icon(
+                    imageVector = if (isPlaying) {
+                        ImageVector.vectorResource(R.drawable.media3_notification_pause)
+                    } else {
+                        Icons.Rounded.PlayArrow
+                    },
+                    contentDescription = if (isPlaying) "Pause" else "Play",
+                    tint = Color.White,
+                    modifier = Modifier.size(24.dp)
+                )
             }
         }
+    }
+}
 
-        // Middle Section: Scrolling lyrics during playback / Title & Artist when paused
-        Column(
-            modifier = Modifier
-                .padding(horizontal = 12.dp)
-                .weight(1f)
-                // Horizontal song-swipe: ONLY this text block rides the finger
-                // (damped) and fades as it's pulled; cover and buttons stay put.
-                .graphicsLayer {
-                    dragX?.let { d ->
-                        translationX = d.value * 0.45f
-                        alpha = (1f - kotlin.math.abs(d.value) / 320f).coerceIn(0.15f, 1f)
-                    }
+/**
+ * Center text block: rolling lyrics while playing, title & artist when paused.
+ * This is the ONLY element that follows the horizontal song-swipe. The text
+ * always stays centered inside whatever space the current button layout leaves,
+ * so it never drifts toward either thumb zone.
+ */
+@Composable
+private fun MiniPlayerCenterText(
+    isPlaying: Boolean,
+    currentLyricText: String?,
+    nextLyricText: String?,
+    metadata: MediaMetadata?,
+    active: Boolean,
+    dragX: Animatable<Float, AnimationVector1D>?,
+    swipeDir: Int,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            // Horizontal song-swipe: ONLY this text block rides the finger
+            // (damped) and fades as it's pulled; cover and buttons stay put.
+            .graphicsLayer {
+                dragX?.let { d ->
+                    translationX = d.value * 0.45f
+                    alpha = (1f - kotlin.math.abs(d.value) / 320f).coerceIn(0.15f, 1f)
+                }
+            },
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        if (isPlaying && !currentLyricText.isNullOrBlank()) {
+            // PLAYING WITH SYNCED LYRICS: Smoothly animated rolling lyrics
+            AnimatedContent(
+                targetState = currentLyricText,
+                transitionSpec = {
+                    (slideInVertically { height -> height / 2 } + fadeIn(tween(250)))
+                        .togetherWith(slideOutVertically { height -> -height / 2 } + fadeOut(tween(250)))
                 },
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            if (isPlaying && !currentLyricText.isNullOrBlank()) {
-                // PLAYING WITH SYNCED LYRICS: Smoothly animated rolling lyrics
-                AnimatedContent(
-                    targetState = currentLyricText,
-                    transitionSpec = {
-                        (slideInVertically { height -> height / 2 } + fadeIn(tween(250)))
-                            .togetherWith(slideOutVertically { height -> -height / 2 } + fadeOut(tween(250)))
-                    },
-                    label = "MiniPlayerLyric"
-                ) { lyric ->
+                label = "MiniPlayerLyric"
+            ) { lyric ->
+                Text(
+                    text = lyric,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .basicMarquee()
+                )
+            }
+
+            val subText = nextLyricText ?: metadata?.artist?.toString() ?: ""
+            if (subText.isNotBlank()) {
+                Text(
+                    text = subText,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.Normal,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .basicMarquee()
+                )
+            }
+        } else {
+            // PAUSED OR NO LYRICS AVAILABLE: Song Title & Artist Info.
+            // On a swipe-change the new song's text slides in from the side
+            // opposite the swipe direction and crossfades over the old one.
+            val artistText = metadata?.artist?.toString() ?: ""
+            val yearText = if (metadata?.recordingYear != 0 && metadata?.mediaType != MediaMetadata.MEDIA_TYPE_RADIO_STATION) {
+                " • " + metadata?.recordingYear.toString()
+            } else ""
+            AnimatedContent(
+                targetState = metadata?.title?.toString().orEmpty() to (artistText + yearText),
+                transitionSpec = {
+                    val dir = if (swipeDir == 0) 1 else swipeDir
+                    (slideInHorizontally(tween(300)) { w -> -w / 3 * dir } + fadeIn(tween(300)))
+                        .togetherWith(
+                            slideOutHorizontally(tween(200)) { w -> w / 3 * dir } + fadeOut(tween(200))
+                        )
+                },
+                label = "MiniPlayerSongMeta"
+            ) { (titleText, subText) ->
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
-                        text = lyric,
+                        text = titleText,
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSurface,
@@ -343,48 +499,12 @@ fun NowPlayingMiniPlayer(
                             .fillMaxWidth()
                             .basicMarquee()
                     )
-                }
-
-                val subText = nextLyricText ?: metadata?.artist?.toString() ?: ""
-                if (subText.isNotBlank()) {
-                    Text(
-                        text = subText,
-                        style = MaterialTheme.typography.bodySmall,
-                        fontWeight = FontWeight.Normal,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .basicMarquee()
-                    )
-                }
-            } else {
-                // PAUSED OR NO LYRICS AVAILABLE: Song Title & Artist Info.
-                // On a swipe-change the new song's text slides in from the side
-                // opposite the swipe direction and crossfades over the old one.
-                val artistText = metadata?.artist?.toString() ?: ""
-                val yearText = if (metadata?.recordingYear != 0 && metadata?.mediaType != MediaMetadata.MEDIA_TYPE_RADIO_STATION) {
-                    " • " + metadata?.recordingYear.toString()
-                } else ""
-                AnimatedContent(
-                    targetState = metadata?.title?.toString().orEmpty() to (artistText + yearText),
-                    transitionSpec = {
-                        val dir = if (swipeDir == 0) 1 else swipeDir
-                        (slideInHorizontally(tween(300)) { w -> -w / 3 * dir } + fadeIn(tween(300)))
-                            .togetherWith(
-                                slideOutHorizontally(tween(200)) { w -> w / 3 * dir } + fadeOut(tween(200))
-                            )
-                    },
-                    label = "MiniPlayerSongMeta"
-                ) { (titleText, subText) ->
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    if (subText.isNotBlank()) {
                         Text(
-                            text = titleText,
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onSurface,
+                            text = subText,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Normal,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             textAlign = TextAlign.Center,
@@ -392,42 +512,18 @@ fun NowPlayingMiniPlayer(
                                 .fillMaxWidth()
                                 .basicMarquee()
                         )
-                        if (subText.isNotBlank()) {
-                            Text(
-                                text = subText,
-                                style = MaterialTheme.typography.bodySmall,
-                                fontWeight = FontWeight.Normal,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                textAlign = TextAlign.Center,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .basicMarquee()
-                            )
-                        }
                     }
                 }
             }
-
-            // Audio rhythm waveform while playing
-            if (isPlaying && active) {
-                Spacer(modifier = Modifier.height(2.dp))
-                MiniPlayerWaveform(
-                    color = MaterialTheme.colorScheme.primary
-                )
-            }
         }
 
-        // Right side: Output device (Jukebox) button — same 52dp footprint as
-        // the album-art circle on the left, larger icon to match.
-        OutputDeviceButton(
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            size = 26.dp,
-            iconAlpha = 1f,
-            chip = true,
-            onClick = onOutputDeviceClick
-        )
+        // Audio rhythm waveform while playing
+        if (isPlaying && active) {
+            Spacer(modifier = Modifier.height(2.dp))
+            MiniPlayerWaveform(
+                color = MaterialTheme.colorScheme.primary
+            )
+        }
     }
 }
 

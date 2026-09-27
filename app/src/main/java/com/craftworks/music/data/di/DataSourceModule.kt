@@ -32,12 +32,6 @@ object DataSourceModule {
 
     @Singleton
     @Provides
-    fun provideNavidromeDataSource(): NavidromeDataSource {
-        return NavidromeDataSource()
-    }
-
-    @Singleton
-    @Provides
     fun provideLrcLibDataSource(
         settingsManager: MediaProviderSettingsManager,
         @ApplicationContext context: Context

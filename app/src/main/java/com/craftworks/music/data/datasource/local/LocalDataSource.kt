@@ -32,11 +32,11 @@ class LocalDataSource @Inject constructor(
         }
     }
 
-    fun getLocalAlbum(albumId: String): List<MediaItem>? {
+    suspend fun getLocalAlbum(albumId: String): List<MediaItem>? {
         return localProvider.getLocalAlbum(albumId)
     }
 
-    fun getLocalSongs(): List<MediaItem> {
+    suspend fun getLocalSongs(): List<MediaItem> {
         return localProvider.getLocalSongs()
     }
 
@@ -49,11 +49,16 @@ class LocalDataSource @Inject constructor(
         }
     }
 
-    fun getLocalSong(songId: String): MediaItem? {
+    /**
+     * Single-song lookup. Kept as a full scan for now, but it runs on IO —
+     * it is called from createLocalPlaylist/addSongToLocalPlaylist, which used
+     * to scan MediaStore on the caller's (main) thread.
+     */
+    suspend fun getLocalSong(songId: String): MediaItem? {
         return localProvider.getLocalSongs().find { it.mediaMetadata.extras?.getString("navidromeID") == songId }
     }
 
-    fun getLocalArtists(): List<MediaData.Artist> {
+    suspend fun getLocalArtists(): List<MediaData.Artist> {
         return localProvider.getLocalArtists()
     }
 
@@ -61,7 +66,7 @@ class LocalDataSource @Inject constructor(
         return localProvider.getAlbumsByArtistId(artist)
     }
 
-    fun searchLocalArtists(query: String): List<MediaData.Artist> {
+    suspend fun searchLocalArtists(query: String): List<MediaData.Artist> {
         if (query.isBlank()) return getLocalArtists()
         return localProvider.getLocalArtists().filter {
             it.name.contains(query, ignoreCase = true)
@@ -75,7 +80,6 @@ class LocalDataSource @Inject constructor(
 
     suspend fun getLocalPlaylistSongs(playlistId: String): List<MediaItem> {
         val playlist = localDataSettingsManager.localPlaylists.first().find { it.navidromeID == playlistId }
-        println("Found playlist: $playlist")
         return playlist?.songs?.map { it.toMediaItem() } ?: emptyList()
     }
 
@@ -115,8 +119,6 @@ class LocalDataSource @Inject constructor(
         val playlistIndex = currentPlaylistsFromStore.indexOfFirst { it.navidromeID == playlistId }
         if (playlistIndex == -1) return false
 
-        println("Found playlist to modify: ${currentPlaylistsFromStore[playlistIndex]}")
-
         val playlistToModify = currentPlaylistsFromStore[playlistIndex]
 
         val updatedSongs = (playlistToModify.songs ?: emptyList()).toMutableList()
@@ -128,8 +130,6 @@ class LocalDataSource @Inject constructor(
 
         val updatedPlaylist = playlistToModify.copy(songs = updatedSongs)
         currentPlaylistsFromStore[playlistIndex] = updatedPlaylist
-
-        println("modified playlist: ${currentPlaylistsFromStore[playlistIndex]}")
 
         localDataSettingsManager.saveLocalPlaylists(currentPlaylistsFromStore)
         return true

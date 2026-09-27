@@ -224,7 +224,7 @@ fun TvPlaylistDetails(
                 contentPadding = PaddingValues(vertical = 24.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                items(playlistSongs) { song ->
+                items(playlistSongs, key = { it.mediaId }) { song ->
                     TvHorizontalSongCard (
                         song = song,
                         showTrackNumber = false,

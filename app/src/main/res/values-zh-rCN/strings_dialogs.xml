@@ -64,6 +64,16 @@
     <string name="NowPlayingTitleAlignment_Left">左对齐</string>
     <string name="NowPlayingTitleAlignment_Center">居中对齐</string>
     <string name="NowPlayingTitleAlignment_Right">右对齐</string>
+
+    <!-- 迷你播放器按钮位置 -->
+    <string name="Setting_MiniPlayerButtons">迷你播放器按钮位置</string>
+    <string name="MiniPlayerButtons_LeftPaired">左并排</string>
+    <string name="MiniPlayerButtons_Symmetric">对称分布</string>
+    <string name="MiniPlayerButtons_RightPaired">右并排</string>
+    <string name="MiniPlayerButtons_LeftPaired_Desc">封面与输出设备并排靠左，便于左手单手操作</string>
+    <string name="MiniPlayerButtons_Symmetric_Desc">封面靠左、输出设备靠右（默认）</string>
+    <string name="MiniPlayerButtons_RightPaired_Desc">封面与输出设备并排靠右，便于右手单手操作</string>
+
     <!-- Sleep Timer Dialog -->
     <string name="Dialog_SetSleepTimer">设置睡眠定时器</string>
 </resources>

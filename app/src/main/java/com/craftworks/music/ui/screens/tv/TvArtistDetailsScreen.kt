@@ -247,7 +247,7 @@ fun TvArtistDetailsScreen(
                             .padding(vertical = 8.dp)
                     )
                 }
-                items(albumsInGroup) { album ->
+                items(albumsInGroup, key = { it.mediaId }) { album ->
                     TvAlbumCard(
                         album = album,
                         onClick = {

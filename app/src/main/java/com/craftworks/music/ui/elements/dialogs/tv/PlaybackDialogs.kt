@@ -6,14 +6,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.platform.LocalContext
 import com.craftworks.music.R
-import com.craftworks.music.managers.settings.PlaybackSettingsManager
+import com.craftworks.music.managers.settings.rememberPlaybackSettings
 import kotlinx.coroutines.launch
 
 @Composable
 fun TranscodingBitrateDialog(setShowDialog: (Boolean) -> Unit, isWifiDialog: Boolean = true) {
-    val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val manager = PlaybackSettingsManager(context)
+    val manager = rememberPlaybackSettings()
 
     val currentBitrate by if (isWifiDialog)
         manager.wifiTranscodingBitrateFlow.collectAsState("")
@@ -41,9 +40,8 @@ fun TranscodingBitrateDialog(setShowDialog: (Boolean) -> Unit, isWifiDialog: Boo
 
 @Composable
 fun TranscodingFormatDialog(setShowDialog: (Boolean) -> Unit) {
-    val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val manager = PlaybackSettingsManager(context)
+    val manager = rememberPlaybackSettings()
     val currentFormat by manager.transcodingFormatFlow.collectAsState("")
 
     GenericListDialog(

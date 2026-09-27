@@ -24,8 +24,6 @@ fun MediaData.Radio.toMediaItem(): MediaItem {
             })
             .build()
 
-    println(".toMediaItem() : station: ${this@toMediaItem.name} mediaitem station: ${mediaMetadata.station}")
-
     return MediaItem.Builder()
         .setMediaMetadata(mediaMetadata)
         .setMediaId(this@toMediaItem.media)

@@ -385,7 +385,7 @@ fun AlbumDetails(
                             )
                         }
                     }
-                    items(albumsInGroup) { song ->
+                    items(albumsInGroup, key = { it.mediaId }) { song ->
                         HorizontalSongCard(
                             song = song,
                             modifier = Modifier.animateItem(),
@@ -408,7 +408,7 @@ fun AlbumDetails(
                 }
             }
             else {
-                items(currentAlbum.subList(1, currentAlbum.size)) { song ->
+                items(currentAlbum.subList(1, currentAlbum.size), key = { it.mediaId }) { song ->
                     HorizontalSongCard(
                         song = song,
                         modifier = Modifier.animateItem(),

@@ -9,6 +9,7 @@ import com.craftworks.music.dataStore
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
@@ -30,7 +31,7 @@ class PlaybackSettingsManager @Inject constructor(
 
     val wifiTranscodingBitrateFlow: Flow<String> = context.dataStore.data.map { preferences ->
         preferences[TRANSCODING_BITRATE_WIFI_KEY] ?: "No Transcoding"
-    }
+    }.distinctUntilChanged()
 
     suspend fun setWifiTranscodingBitrate(bitrate: String) {
         withContext(NonCancellable) {
@@ -42,7 +43,7 @@ class PlaybackSettingsManager @Inject constructor(
 
     val mobileDataTranscodingBitrateFlow: Flow<String> = context.dataStore.data.map { preferences ->
         preferences[TRANSCODING_BITRATE_DATA_KEY] ?: "No Transcoding"
-    }
+    }.distinctUntilChanged()
 
     suspend fun setMobileDataTranscodingBitrate(bitrate: String) {
         withContext(NonCancellable) {
@@ -54,7 +55,7 @@ class PlaybackSettingsManager @Inject constructor(
 
     val transcodingFormatFlow: Flow<String> = context.dataStore.data.map { preferences ->
         preferences[TRANSCODING_FORMAT_KEY] ?: "opus"
-    }
+    }.distinctUntilChanged()
 
     suspend fun setTranscodingFormat(format: String) {
         withContext(NonCancellable) {
@@ -66,7 +67,7 @@ class PlaybackSettingsManager @Inject constructor(
 
     val scrobblePercentFlow: Flow<Int> = context.dataStore.data.map { preferences ->
         preferences[SCROBBLE_PERCENT_KEY] ?: 7
-    }
+    }.distinctUntilChanged()
 
     suspend fun setScrobblePercent(scrobblePercent: Int) {
         withContext(NonCancellable) {
@@ -78,7 +79,7 @@ class PlaybackSettingsManager @Inject constructor(
 
     val autoPlayFlow: Flow<Boolean> = context.dataStore.data.map { preferences ->
         preferences[AUTOPLAY_SONGS] ?: false
-    }
+    }.distinctUntilChanged()
 
     suspend fun setAutoPlay(autoPlay: Boolean) {
         withContext(NonCancellable) {

@@ -1,6 +1,7 @@
 package com.craftworks.music.managers.settings
 
 import android.content.Context
+import android.util.Log
 import android.os.Build
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -26,6 +27,8 @@ import kotlinx.serialization.json.Json
 import javax.inject.Inject
 import javax.inject.Singleton
 
+private const val TAG = "APPEARANCE_SETTINGS"
+
 enum class OLEDProtectionMode {
     OFF, LYRICS_ONLY, MINIMAL,
 }
@@ -38,6 +41,21 @@ enum class PageTransitionStyle {
     CUBIC_BEZIER,
     SNAPPY,
     GENTLE
+}
+
+/**
+ * Horizontal placement of the two mini player buttons (album art + output device
+ * chip) inside the dock row, so one-handed reach can be tuned per handedness.
+ */
+enum class MiniPlayerButtonLayout {
+    /** Both buttons grouped at the leading edge, text flows after them. */
+    LEFT_PAIRED,
+
+    /** Classic: album art pinned left, output chip pinned right. */
+    SYMMETRIC,
+
+    /** Both buttons grouped at the trailing edge, text flows before them. */
+    RIGHT_PAIRED
 }
 
 @Singleton
@@ -67,6 +85,7 @@ class AppearanceSettingsManager @Inject constructor(
         private val OLED_PROTECTION_MODE = stringPreferencesKey("oled_protection")
         private val DISABLE_SCREEN_STANDBY = booleanPreferencesKey("disable_screen_standby")
         private val PAGE_TRANSITION_STYLE = stringPreferencesKey("page_transition_style")
+        private val MINI_PLAYER_BUTTON_LAYOUT = stringPreferencesKey("mini_player_button_layout")
     }
 
     val usernameFlow: Flow<String> = context.dataStore.data.map { preferences ->
@@ -91,10 +110,10 @@ class AppearanceSettingsManager @Inject constructor(
                         NowPlayingBackground.STATIC_BLUR.name
             )
         } catch (e: Exception) {
-            println(e.message)
+            Log.w(TAG, "Failed to decode preference", e)
             NowPlayingBackground.STATIC_BLUR
         }
-    }
+    }.distinctUntilChanged()
 
     suspend fun setBackgroundType(backgroundType: NowPlayingBackground) {
         withContext(NonCancellable) {
@@ -106,7 +125,7 @@ class AppearanceSettingsManager @Inject constructor(
 
     val showMoreInfoFlow: Flow<Boolean> = context.dataStore.data.map { preferences ->
         preferences[SHOW_MORE_INFO_KEY] ?: true
-    }
+    }.distinctUntilChanged()
 
     suspend fun setShowMoreInfo(showMoreInfo: Boolean) {
         withContext(NonCancellable) {
@@ -119,7 +138,7 @@ class AppearanceSettingsManager @Inject constructor(
     val nowPlayingLyricsBlurFlow: Flow<Boolean> = context.dataStore.data.map { preferences ->
         preferences[NOW_PLAYING_LYRIC_BLUR_KEY]
             ?: true
-    }
+    }.distinctUntilChanged()
 
     suspend fun setNowPlayingLyricsBlur(blur: Boolean) {
         withContext(NonCancellable) {
@@ -131,7 +150,7 @@ class AppearanceSettingsManager @Inject constructor(
 
     val showNavidromeLogoFlow: Flow<Boolean> = context.dataStore.data.map { preferences ->
         preferences[SHOW_NAVIDROME_KEY] ?: true
-    }
+    }.distinctUntilChanged()
 
     suspend fun setShowNavidromeLogo(showNavidromeLogo: Boolean) {
         withContext(NonCancellable) {
@@ -152,10 +171,10 @@ class AppearanceSettingsManager @Inject constructor(
         try {
             jsonString?.let { Json.decodeFromString<List<HomeItem>>(it) } ?: defaultValue
         } catch (e: Exception) {
-            println(e.message)
+            Log.w(TAG, "Failed to decode preference", e)
             defaultValue
         }
-    }
+    }.distinctUntilChanged()
 
     suspend fun setHomeItems(items: List<HomeItem>) {
         withContext(NonCancellable) {
@@ -189,10 +208,10 @@ class AppearanceSettingsManager @Inject constructor(
         try {
             jsonString?.let { Json.decodeFromString<List<BottomNavItem>>(it) } ?: defaultValue
         } catch (e: Exception) {
-            println(e.message)
+            Log.w(TAG, "Failed to decode preference", e)
             defaultValue
         }
-    }
+    }.distinctUntilChanged()
 
     suspend fun setBottomNavItems(items: List<BottomNavItem>) {
         withContext(NonCancellable) {
@@ -204,7 +223,7 @@ class AppearanceSettingsManager @Inject constructor(
 
     val appTheme: Flow<String> = context.dataStore.data.map { preferences ->
         preferences[APP_THEME] ?: "SYSTEM"
-    }
+    }.distinctUntilChanged()
 
     suspend fun setAppTheme(theme: AppTheme) {
         withContext(NonCancellable) {
@@ -216,7 +235,7 @@ class AppearanceSettingsManager @Inject constructor(
 
     val showProviderDividersFlow: Flow<Boolean> = context.dataStore.data.map { preferences ->
         preferences[SHOW_PROVIDER_DIVIDERS] ?: true
-    }
+    }.distinctUntilChanged()
 
     suspend fun setShowProviderDividers(showDividers: Boolean) {
         withContext(NonCancellable) {
@@ -228,7 +247,7 @@ class AppearanceSettingsManager @Inject constructor(
 
     val lyricsAnimationSpeedFlow: Flow<Int> = context.dataStore.data.map { preferences ->
         preferences[LYRICS_ANIMATION_SPEED] ?: 1200
-    }
+    }.distinctUntilChanged()
 
     suspend fun setLyricsAnimationSpeed(speed: Int) {
         withContext(NonCancellable) {
@@ -241,7 +260,7 @@ class AppearanceSettingsManager @Inject constructor(
     val refreshAnimationFlow: Flow<Boolean> = context.dataStore.data.map { preferences ->
         preferences[USE_REFRESH_ANIMATION]
             ?: (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
-    }
+    }.distinctUntilChanged()
 
     suspend fun setUseRefreshAnimation(useRefreshAnimation: Boolean) {
         withContext(NonCancellable) {
@@ -253,7 +272,7 @@ class AppearanceSettingsManager @Inject constructor(
 
     val showTrackNumbersFlow: Flow<Boolean> = context.dataStore.data.map { preferences ->
         preferences[SHOW_TRACK_NUMBERS] ?: true
-    }
+    }.distinctUntilChanged()
 
     suspend fun setShowTrackNumbers(showTrackNumbers: Boolean) {
         withContext(NonCancellable) {
@@ -268,7 +287,7 @@ class AppearanceSettingsManager @Inject constructor(
             NowPlayingAlignment.valueOf(
                 preferences[NP_TITLE_ALIGNMENT] ?: NowPlayingAlignment.LEFT.name
             )
-        }
+        }.distinctUntilChanged()
 
     suspend fun setNowPlayingTitleAlignment(nowPlayingTitleAlignment: NowPlayingAlignment) {
         withContext(NonCancellable) {
@@ -283,7 +302,7 @@ class AppearanceSettingsManager @Inject constructor(
             NowPlayingAlignment.valueOf(
                 preferences[NP_LYRICS_ALIGNMENT] ?: NowPlayingAlignment.CENTER.name
             )
-        }
+        }.distinctUntilChanged()
 
     suspend fun setNowPlayingLyricsAlignment(nowPlayingLyricsAlignment: NowPlayingAlignment) {
         withContext(NonCancellable) {
@@ -296,7 +315,7 @@ class AppearanceSettingsManager @Inject constructor(
     val lyricsAutoScroll: Flow<Boolean> =
         context.dataStore.data.map { preferences ->
             preferences[LYRICS_AUTOSCROLL] ?: true
-        }
+        }.distinctUntilChanged()
 
     suspend fun setLyricsAutoScroll(autoScroll: Boolean) {
         withContext(NonCancellable) {
@@ -310,7 +329,7 @@ class AppearanceSettingsManager @Inject constructor(
     val lyricsRecenterAfterScroll: Flow<Boolean> =
         context.dataStore.data.map { preferences ->
             preferences[LYRICS_RECENTER_AFTER_SCROLL] ?: true
-        }
+        }.distinctUntilChanged()
 
     suspend fun setLyricsRecenterAfterScroll(recenterAfterScroll: Boolean) {
         withContext(NonCancellable) {
@@ -327,7 +346,7 @@ class AppearanceSettingsManager @Inject constructor(
         catch (ex: Exception) {
             OLEDProtectionMode.OFF
         }
-    }
+    }.distinctUntilChanged()
 
     suspend fun setOledProtectionMode(mode: OLEDProtectionMode) {
         withContext(NonCancellable) {
@@ -363,6 +382,24 @@ class AppearanceSettingsManager @Inject constructor(
         withContext(NonCancellable) {
             context.dataStore.edit { preferences ->
                 preferences[PAGE_TRANSITION_STYLE] = style.name
+            }
+        }
+    }
+
+    val miniPlayerButtonLayoutFlow: Flow<MiniPlayerButtonLayout> = context.dataStore.data.map { preferences ->
+        try {
+            MiniPlayerButtonLayout.valueOf(
+                preferences[MINI_PLAYER_BUTTON_LAYOUT] ?: MiniPlayerButtonLayout.SYMMETRIC.name
+            )
+        } catch (e: Exception) {
+            MiniPlayerButtonLayout.SYMMETRIC
+        }
+    }.distinctUntilChanged()
+
+    suspend fun setMiniPlayerButtonLayout(layout: MiniPlayerButtonLayout) {
+        withContext(NonCancellable) {
+            context.dataStore.edit { preferences ->
+                preferences[MINI_PLAYER_BUTTON_LAYOUT] = layout.name
             }
         }
     }

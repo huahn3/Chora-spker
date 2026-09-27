@@ -110,13 +110,27 @@ class SongRepository @Inject constructor(
         navidromeDataSource.scrobbleSong(songId, submission)
     }
 
-    suspend fun reportPlayback(songId: String, state: String, positionMs: Long) {
+    suspend fun reportPlayback(
+        songId: String,
+        state: String,
+        positionMs: Long,
+        outputDevice: String? = null,
+        volume: Int? = null,
+        playMode: String? = null,
+        bilingualActive: Boolean? = null
+    ) {
         if (songId.isBlank() || songId.startsWith("Local"))
             return
 
         try {
             android.util.Log.d("NAVIDROME", "reportPlayback: songId=$songId, state=$state, pos=$positionMs")
-            navidromeDataSource.reportPlayback(songId, state, positionMs)
+            navidromeDataSource.reportPlayback(
+                songId, state, positionMs,
+                outputDevice = outputDevice,
+                volume = volume,
+                playMode = playMode,
+                bilingualActive = bilingualActive
+            )
         } catch (e: Exception) {
             android.util.Log.e("NAVIDROME", "Failed to report playback", e)
         }

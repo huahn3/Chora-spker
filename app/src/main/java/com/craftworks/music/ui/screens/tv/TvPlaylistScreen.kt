@@ -67,7 +67,7 @@ fun TvPlaylistScreen(
         horizontalArrangement = Arrangement.spacedBy(24.dp),
         verticalArrangement = Arrangement.spacedBy(24.dp),
     ) {
-        items(playlists) { playlist ->
+        items(playlists, key = { it.mediaId }) { playlist ->
             TvPlaylistCard (
                 playlist = playlist,
                 onClick = {

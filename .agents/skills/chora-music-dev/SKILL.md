@@ -1,6 +1,6 @@
 ---
 name: chora-music-dev
-description: Chora 全栈全景架构中枢、Media3/ExoPlayer 播放内核、Navidrome/Subsonic 音频流协议、八大核心开发铁律与避坑速查指南
+description: Chora 全栈全景架构中枢、Media3/ExoPlayer 播放内核、Navidrome/Subsonic 音频流协议、Jukebox 多输出设备与跨设备播放接管 (Playback Handoff)、十大核心开发铁律与避坑速查指南
 ---
 
 # Chora (Navidrome / Local Music Player) 全栈开发与架构专家指南
@@ -18,6 +18,7 @@ description: Chora 全栈全景架构中枢、Media3/ExoPlayer 播放内核、Na
 | **Navidrome 核心** | `app/src/main/java/.../managers/NavidromeManager.kt`<br>`app/src/main/java/.../data/datasource/navidrome/` | OkHttp3, Ktor Client, Subsonic REST API, Native REST API | 多服务器管理、动态 URL 穿透解析（局域网/公网自动选路）、Token/Salt 签名计算、Bearer Token 登录握手与刷新、原生 Jukebox / 歌词翻译扩展 |
 | **Jukebox 输出管理** | `app/src/main/java/.../managers/JukeboxManager.kt`<br>`app/src/main/java/.../data/model/JukeboxModel.kt` | Kotlin Flow, StateFlow, Coroutines, Ktor | 局域网/远程多输出设备调度（Browser / MPD / DLNA / 小爱音箱）、音量防抖互锁、无缝流转、状态轮询 |
 | **歌词与翻译中枢** | `app/src/main/java/.../data/repository/LyricsRepository.kt`<br>`app/src/main/java/.../data/model/LyricsTranslationModel.kt` | LRCLIB, NetEase, Navidrome Native API | 多源歌词获取、逐行时间戳解析、服务端 AI 翻译缓存预探测、双语对照数据结构映射 |
+| **跨设备播放接管** | `app/src/main/java/.../managers/PlaybackHandoffManager.kt`<br>`app/src/main/java/.../data/model/PlaybackHandoffModel.kt` | Ktor, HttpURLConnection SSE, kotlinx.serialization | 会话可见性上报（被看见）、`GET /api/playback/sessions` 轮询（看见别人）、`takeover()` 六维状态继承（进度/播放意图/音量/输出设备/循环/双语）、SSE 被接管通知、封面现签与缓存 |
 | **本地状态管理** | `app/src/main/java/.../managers/settings/` | Jetpack Preferences DataStore, Kotlin Flow | 播放续播状态 (`LocalDataSettingsManager`)、外观与动效配置 (`AppearanceSettingsManager`)、缓存与网络配置 |
 | **全屏与底栏播放 UI** | `app/src/main/java/.../ui/playing/` | Jetpack Compose Expressive, Coil, Canvas | 响应式底栏 Mini Player、圆形进度环自适应、大屏全屏播放器、双语对照歌词逐行滚动 (`NowPlayingLyrics.kt`)、输出设备底栏浮层 (`JukeboxDeviceBottomSheet.kt`) |
 | **TV 交互适配** | `app/src/main/java/.../ui/playing/tv/`<br>`app/src/main/java/.../ui/screens/tv/` | Compose for TV, D-Pad Navigation | 遥控器十字焦点导航、大屏进度滑块、TV 专属专辑与歌单展示 |
@@ -41,6 +42,11 @@ Navidrome 官方 Subsonic 接口满足基础音频拉取，而**多输出设备�
 | `/api/jukebox/status` | `GET` | 无 (需带 Header `Authorization: Bearer <token>`) | `{"status":"...","currentTime":0,"duration":0,"volume":0,"deviceId":"...","deviceType":"..."}` | **注意**：此处服务端返回的是 **camelCase** (`currentTime`, `deviceId`, `deviceType`)！ |
 | `/api/lyrics/translate/{songId}` | `GET` | Query 参数: `?lang=zh-CN` | `{"songId":"...","targetLang":"...","lines":[...],"bilingualLrc":"..."}` | 探测缓存；若无缓存服务端返回 404 Not Found (正常现象，切勿抛异常) |
 | `/api/lyrics/translate` | `POST` | **`{"songId":"...","targetLang":"zh-CN","force":false}`** <br>*(注意此处是 camelCase)* | 同上 | 请求服务端执行 AI 翻译；长按悬浮按钮传 `force: true` 强制重新翻译 |
+| `/api/playback/sessions` | `GET` | 无 (Header `X-ND-Authorization` + `X-ND-Client-Unique-Id`) | `{"count":N,"sessions":[{"sessionId","songId","positionMs","coverArtId","outputDevice","playMode","volume","isCurrentSession"}]}` | 响应 **camelCase**；`volume`/`playMode`/`bilingual` 是 `omitempty` ⇒ DTO 用 `Int?`，**缺失 ≠ 0**（服务端把 `volume=0` 当"未上报"） |
+| `/api/playback/sessions/{id}/takeover` | `POST` | `{"action":"pause","sourceSessionId":"...","newPlayerName":"...","targetOutput":"..."}` (camelCase) | `{"status":"...","takenOverSessionId":"...","session":{...}}` | **对不存在的会话也返回 200**（`session` 缺失）⇒ 不能用状态码判断成败，异常只 log；必须在**本地已起播之后**才发 |
+| `/api/events?jwt=<JWT>` | `GET` (SSE) | token **只能**走 Query `jwt`（走 header 会 401） | `event: playbackHandoff` + `data: {"targetSessionId":"...","newPlayerName":"..."}` | 服务端 `broadcastToAll`，**必须**按 `targetSessionId == myClientId` 过滤；Ktor `response.body()` 会缓冲到底 ⇒ SSE 只能 `HttpURLConnection` + `BufferedReader` 逐行读，`readTimeout = 0` |
+| `/rest/reportPlayback` | `GET` (Subsonic) | 扩展 query `outputDevice` / `volume` / `playMode` / `bilingualActive` | — | 只能经 `MusicService.reportPlaybackState()` 单一出口；播放中 **12s** 心跳一次（TTL = 剩余曲长 + 5s，间隔过长会提前掉出列表） |
+| `/rest/getCoverArt.view` | `GET` (Subsonic) | `id` 可传 `coverArtId` / `albumId` / `songId` 任一 + `u/t/s/v/c/size` | 二进制图片 | 会话封面 URL 每次换 `salt` ⇒ Coil 缓存 key 必须用稳定 id，**严禁**用 URL 当 key |
 
 ---
 
@@ -185,4 +191,23 @@ adb -s 192.168.31.242:5555 logcat -s JUKEBOX:V NAVIDROME_NATIVE:V LYRICS_TRANSLA
 3. `GraphicsLayerScope` 无 `cornerRadius/roundRadius` → `clip=true; shape=RoundedCornerShape(px.dp)`。
 4. `PointerInputScope.touchSlop` 不可引用 → 固定 10dp 换算。
 5. `LocalConfiguration.current` 不能写进 `remember {}` lambda（非 Composable 上下文）。
-6. 完整清单见 `docs/ARCHITECTURE.md` §8。
+6. `setMediaItems` / `SongHelper.play` 之后**立刻** `seekTo()` 会静默失效（窗口时长 `TIMEBAR_STATE_NOT_AVAILABLE` → `TIMEBAR_STATE_NO_SEEK`，不抛异常、logcat 干净）→ 必须等 `isCurrentMediaItemSeekable` 再跳，见铁律 10。
+7. `AsyncImage` 加载**带签名参数的 URL**（每次 `salt` 不同）时必须显式 `memoryCacheKey` / `diskCacheKey` 为稳定 id，否则每轮轮询重新下图。
+8. 完整清单见 `docs/ARCHITECTURE.md` §8。
+
+---
+
+## 7. 铁律 10: 跨设备播放接管 (Playback Handoff, 2026-09-27，navidrome2all fork)
+
+`/api/playback/*` + `/api/events` + `/rest/reportPlayback` 扩展字段实现 Spotify Connect 式接力。**六个维度必须一起继承**：进度、播放意图、音量、输出设备、循环模式、双语歌词。
+
+- **铁律 10.1（上报单一出口）**：所有 `/rest/reportPlayback` 必须走 `MusicService.reportPlaybackState(state, positionMs)`，禁止任何调用点自己拼字段；播放中 `startPlaybackHeartbeat()` 每 **12s** 报一次 `playing`（会话 TTL = 剩余曲长 + 5s）。
+- **铁律 10.2（稳定身份）**：`NavidromeDataSource.getOrCreateClientUniqueId()` 在 `ChoraNetworkPrefs` 持久化 `chora-xxxxxxxx`，`Application.onCreate` 预热；所有 `/rest/*` 与 `/api/*` 带 `X-ND-Client-Unique-Id`。**sessionId 与 SSE targetSessionId 全靠它对齐**，重装/清数据后 ID 变了会看到"自己的会话在别人的列表里"。
+- **铁律 10.3（接管顺序无空窗）**：先 `songRepository.getSong()` 拿流 → 远程输出先 `await` 完 `JukeboxManager.selectDeviceAwait()` → main 线程起播 + 落点 → **本地已出声之后**才 `POST .../takeover`。反过来会造成"原设备已停、本机未就绪"的静音空窗。`targetOutput` 非 `browser/local` 时曲目由 `MusicService.onMediaItemTransition` 转发，起始秒走 `MediaItem.extras["handoffStartMs"]`。
+- **铁律 10.4（接管落点必须等 seekable）**：`seekWhenPrepared(player, startMs)` — 先试一次；未落点挂一次性 `Player.Listener`(`onTimelineChanged`+`onEvents`)，`isCurrentMediaItemSeekable` 为真再 `seekTo`；`currentPosition >= startMs - 1000` 或 `currentMediaItem.mediaId != expectedMediaId` 立刻 `removeListener`。裸 `seekTo` 会被静默丢弃，表现是"接管成功但从 0:00 重播"（**不报错、日志干净，极难发现**）。
+- **铁律 10.5（线程铁律·崩溃级）**：ExoPlayer 只允许在创建它的线程（main）访问。跨线程读 `isPlaying`/`currentPosition`/`volume`/`repeatMode` 抛**未捕获**的 `IllegalStateException: Player is accessed on the wrong thread`，进程在播歌 12s 后（第一次心跳）直接崩。main 专用：`reportPlaybackState()`（player 回调与 `serviceMainScope` 合规，`serviceIOScope` **不合规**）；IO 协程内改用 `reportPlaybackInline()`，它内部 `withContext(Dispatchers.Main)` 取字段快照再走网络。
+- **铁律 10.6（退出上报不能被自己的 cancel 砍掉）**：`onTaskRemoved`/`onDestroy` 的 `paused` 上报必须跑在 `shutdownScope`（`SupervisorJob + IO`，存活过 `onDestroy`），配 `NonCancellable` + `withTimeoutOrNull(2500)`。用 `serviceIOScope` 会被同方法末尾 `releasePlayerAndScopes()` 的 `cancel()` 掐断，其他设备就多挂一整首歌的"正在播放"。
+- **铁律 10.7（SSE 只处理自己的事件）**：`/api/events?jwt=`（token 不能走 header，实测 401）只处理 `event: playbackHandoff`，且**必须** `ev.targetSessionId == myClientId` 才动作（服务端是 `broadcastToAll`）；命中即 `pause()` + Toast + 重拉列表，断线 5s 重连，`isActive` 与 socket 断开共同驱动退出。
+- **铁律 10.8（别人会话的封面自己签）**：fork 只回 id。`withCoverArt()` 现签 `getCoverArt.view`，资产 id 三级兜底 `coverArtId → albumId → songId`；基础地址取 `NavidromeManager.resolveActiveServerUrl(getCurrentServer())`（与音频流同一选路，局域网可用时不绕公网）。URL 是 `@Transient`，不进 wire format；Coil 缓存 key 固定 `"handoff_cover_" + (coverArtId ?: songId)`；`onError` 回落喇叭图标（404/401/自签 TLS 都不能留白碟）。
+- **铁律 10.9（omitempty ≠ 0）**：`volume`/`playMode`/`bilingual` 服务端 `omitempty`，DTO 必须可空；`effectiveVolume` 只在 `1..100` 内取值否则回落 100，避免把"没上报"读成"静音"。
+- 详细表格与排查路径见 `docs/ARCHITECTURE.md` §3.6、§5.1、§6.5~§6.7。

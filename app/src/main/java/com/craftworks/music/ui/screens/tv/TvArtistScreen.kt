@@ -110,7 +110,7 @@ fun TvArtistScreen(
                 }
             }
         }
-        items(allArtistList) { artist ->
+        items(allArtistList, key = { it.navidromeID }) { artist ->
             TvArtistCard(
                 artist = artist,
                 modifier = Modifier.onFocusChanged {

@@ -64,6 +64,15 @@
     <string name="NowPlayingTitleAlignment_Left">Gauche</string>
     <string name="NowPlayingTitleAlignment_Center">Centre</string>
     <string name="NowPlayingTitleAlignment_Right">Droit</string>
+
+    <!-- Mini Player Button Layout -->
+    <string name="Setting_MiniPlayerButtons">Boutons du mini-lecteur</string>
+    <string name="MiniPlayerButtons_LeftPaired">Groupés à gauche</string>
+    <string name="MiniPlayerButtons_Symmetric">Symétriques</string>
+    <string name="MiniPlayerButtons_RightPaired">Groupés à droite</string>
+    <string name="MiniPlayerButtons_LeftPaired_Desc">Pochette et périphérique de sortie côte à côte à gauche, plus simple avec le pouce gauche</string>
+    <string name="MiniPlayerButtons_Symmetric_Desc">Pochette à gauche, périphérique de sortie à droite (par défaut)</string>
+    <string name="MiniPlayerButtons_RightPaired_Desc">Pochette et périphérique de sortie côte à côte à droite, plus simple avec le pouce droit</string>
     <!-- Now Playing Title Alignment -->
     <string name="Dialog_SetSleepTimer">Set Sleep Timer</string>
 </resources>

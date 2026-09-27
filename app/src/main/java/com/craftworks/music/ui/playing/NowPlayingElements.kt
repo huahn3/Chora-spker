@@ -2,7 +2,9 @@
 
 package com.craftworks.music.ui.playing
 
+import android.os.SystemClock
 import android.util.Log
+import android.widget.Toast
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
@@ -28,6 +30,7 @@ import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
@@ -42,17 +45,22 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.craftworks.music.data.model.PlaybackSessionDto
 import com.craftworks.music.managers.JukeboxManager
+import com.craftworks.music.managers.PlaybackHandoffManager
+import com.craftworks.music.player.ChoraMediaLibraryService
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
@@ -80,6 +88,7 @@ import androidx.media3.common.Timeline
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaController
 import com.craftworks.music.managers.settings.LocalDataSettingsManager
+import com.craftworks.music.managers.settings.rememberLocalDataSettings
 import kotlinx.coroutines.flow.firstOrNull
 import androidx.media3.ui.compose.state.rememberNextButtonState
 import androidx.media3.ui.compose.state.rememberPlayPauseButtonState
@@ -144,6 +153,7 @@ fun PlaybackProgressSlider(
     var isPlaying by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
+    val localDataSettings = rememberLocalDataSettings()
     // Fast-load saved position if mediaController hasn't sought yet on cold start.
     // Guarded so it can only ever fire once per composition: it used to run on
     // every metadata change, so pausing on a new track snapped the slider to the
@@ -153,7 +163,7 @@ fun PlaybackProgressSlider(
         if (metadata == null || resumptionInjected.value) return@LaunchedEffect
         resumptionInjected.value = true
         if (currentValue == 0L) {
-            val resumption = LocalDataSettingsManager(context)
+            val resumption = localDataSettings
                 .playbackResumptionPlaylistWithStartPosition.firstOrNull()
             if (resumption != null && resumption.startPositionMs > 0L && currentValue == 0L) {
                 currentValue = resumption.startPositionMs
@@ -452,7 +462,7 @@ fun LyricsButton(
  */
 private val ActionButtonBoxSize = 44.dp
 private val ActionButtonIconSize = 24.dp
-private val CHIP_ICON_SIZE = 26.dp
+private val CHIP_ICON_SIZE = 22.dp
 private const val ActionButtonAlpha = 0.62f
 private const val ActionButtonDisabledAlpha = 0.28f
 
@@ -601,33 +611,16 @@ fun OutputDeviceButton(
     }
 
     if (chip) {
-        // The dock's output chip is its own thing (bigger, with a real
-        // "remote is active" background) and is not part of the action row.
-        Button(
-            onClick = onClick,
+        // The dock chip is its own thing (ringed disc + handoff progress) and is
+        // not part of the action row.
+        OutputDeviceChip(
+            icon = icon,
+            color = color,
             enabled = enabled,
-            shape = CircleShape,
-            modifier = modifier
-                .bounceClick(enabled = enabled)
-                .size(52.dp),
-            contentPadding = PaddingValues(8.dp),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = when {
-                    isRemoteActive -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
-                    else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
-                },
-                disabledContainerColor = Color.Transparent,
-                contentColor = color.copy(alpha = ActionButtonAlpha),
-                disabledContentColor = color.copy(alpha = ActionButtonDisabledAlpha)
-            )
-        ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = "Output Device",
-                modifier = Modifier.size(CHIP_ICON_SIZE),
-                tint = color.copy(alpha = if (isRemoteActive) 1f else ActionButtonAlpha)
-            )
-        }
+            isRemoteActive = isRemoteActive,
+            modifier = modifier,
+            onClick = onClick
+        )
         return
     }
 
@@ -651,6 +644,172 @@ fun OutputDeviceButton(
             tint = color.copy(alpha = ActionButtonAlpha)
         )
     }
+}
+
+/**
+ * Dock output-device chip. Mirrors the album-art button's exact geometry — a
+ * 48dp / 2.5dp progress ring wrapping a 42dp content disc, both inside the same
+ * 52dp footprint — so the two circles read as a matched pair instead of a flat
+ * grey blob sitting next to cover art.
+ *
+ * The ring is a status display for "audio is living somewhere else":
+ * - our own stream pushed to a Jukebox speaker -> full ring
+ * - another device is playing -> that session's latest position
+ * - nobody -> empty track
+ *
+ * Tap opens the output-device sheet; long-press takes the other device's
+ * session over (same path as the sheet's 接管 row).
+ */
+@Composable
+private fun OutputDeviceChip(
+    icon: ImageVector,
+    color: Color,
+    enabled: Boolean,
+    isRemoteActive: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    val context = LocalContext.current
+    val otherSession by PlaybackHandoffManager.latestOtherSession.collectAsStateWithLifecycle()
+    val takeoverInFlight by PlaybackHandoffManager.takeoverInFlight.collectAsStateWithLifecycle()
+    val handoffProgress = rememberHandoffProgress(otherSession)
+
+    val isTakingOver = takeoverInFlight != null
+    // Either signal means "not playing out of this phone".
+    val isRemote = isRemoteActive || otherSession != null
+
+    val ringTrack = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+    val discBrush = if (isRemote) {
+        Brush.verticalGradient(
+            listOf(
+                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.70f),
+                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.40f)
+            )
+        )
+    } else {
+        Brush.verticalGradient(
+            listOf(
+                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f),
+                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.36f)
+            )
+        )
+    }
+    val iconTint = if (isRemote) MaterialTheme.colorScheme.primary
+    else color.copy(alpha = 0.85f)
+
+    val onLongClick: () -> Unit = {
+        val session = otherSession
+        when {
+            session == null -> Toast.makeText(context, "其他设备当前没有播放", Toast.LENGTH_SHORT).show()
+            isTakingOver -> Unit
+            else -> {
+                val repo = ChoraMediaLibraryService.getInstance()?.songRepository
+                if (repo == null) {
+                    Toast.makeText(context, "播放器尚未就绪，无法接管", Toast.LENGTH_SHORT).show()
+                } else {
+                    PlaybackHandoffManager.takeover(
+                        session = session,
+                        context = context,
+                        songRepository = repo,
+                        forcePlay = session.state == "playing"
+                    )
+                }
+            }
+        }
+    }
+
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = modifier
+            .bounceClick(enabled = enabled)
+            .size(52.dp)
+            .clip(CircleShape)
+            .combinedClickable(
+                enabled = enabled,
+                onClick = onClick,
+                onLongClickLabel = "接管其他设备播放",
+                onLongClick = onLongClick
+            )
+    ) {
+        // Literally the same indicator the cover uses, so both rings in the dock
+        // share geometry, stroke and sweep direction. Another device's progress
+        // wins over our own Jukebox state — it's the newer signal.
+        CircularProgressIndicator(
+            progress = {
+                when {
+                    otherSession != null -> handoffProgress
+                    isRemoteActive -> 1f
+                    else -> 0f
+                }
+            },
+            modifier = Modifier.size(48.dp),
+            color = MaterialTheme.colorScheme.primary,
+            trackColor = ringTrack,
+            strokeWidth = 2.5.dp
+        )
+
+        Box(
+            modifier = Modifier
+                .size(42.dp)
+                .clip(CircleShape)
+                .background(discBrush)
+        )
+
+        if (isTakingOver) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(18.dp),
+                strokeWidth = 2.dp,
+                color = MaterialTheme.colorScheme.primary
+            )
+        } else {
+            Icon(
+                imageVector = icon,
+                contentDescription = "Output Device",
+                modifier = Modifier
+                    .size(CHIP_ICON_SIZE)
+                    // The phone/speaker glyphs are the narrowest of the three, so
+                    // widen them slightly to reach the cover button's optical weight.
+                    .graphicsLayer { scaleX = 1.12f },
+                tint = iconTint
+            )
+        }
+    }
+}
+
+/**
+ * Turns a remote session's polled `positionMs` into a 0..1 fraction that keeps
+ * creeping forward between polls. The ambient poll is 10s, so without this the
+ * ring would sit frozen and read as "stalled" rather than "playing over there".
+ * Re-anchors whenever the server reports a new position.
+ */
+@Composable
+private fun rememberHandoffProgress(session: PlaybackSessionDto?): Float {
+    val durationMs = (session?.duration ?: 0) * 1000L
+    if (session == null || durationMs <= 0L) return 0f
+
+    val sessionId = session.sessionId
+    var basePosition by remember(sessionId) { mutableLongStateOf(session.positionMs) }
+    var baseElapsed by remember(sessionId) { mutableLongStateOf(SystemClock.elapsedRealtime()) }
+    var progress by remember(sessionId) { mutableFloatStateOf(0f) }
+
+    LaunchedEffect(sessionId, session.positionMs) {
+        basePosition = session.positionMs
+        baseElapsed = SystemClock.elapsedRealtime()
+    }
+
+    LaunchedEffect(sessionId, durationMs, session.state) {
+        val playing = session.state == "playing"
+        while (true) {
+            val position = if (playing) {
+                basePosition + (SystemClock.elapsedRealtime() - baseElapsed)
+            } else {
+                basePosition
+            }
+            progress = (position.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
+            delay(500L)
+        }
+    }
+    return progress
 }
 
 

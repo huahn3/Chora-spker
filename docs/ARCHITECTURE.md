@@ -113,6 +113,35 @@ val progress = if (effectiveDuration > 0L) {
 - **铁律 3（协议能力动态降级）**：当 `deviceType == "xiaomi"` 时，原生协议无进度回报且不支持 seek，UI 进度条禁用拖拽并给出轻量友好提示。
 - **铁律 4（无缝流转带进度）**：切换到远程时携带当前本地播放秒数 `position`；切回本机时调用 `POST /api/jukebox/select` (`"browser"`)，本地播放器恢复音量出声。
 
+### 3.6 多端同步接管 (Playback Handoff & Takeover)
+
+对接 navidrome2all fork 的 `/api/playback/*` 原生端点，实现「Spotify Connect / Apple Handoff」式跨设备接力：
+
+| 能力 | 实现 |
+| --- | --- |
+| **被看见** | `MusicService.reportPlaybackState()` 是所有 `/rest/reportPlayback` 调用的唯一出口，统一附带 `outputDevice` / `volume` / `playMode` / `bilingualActive`；`startPlaybackHeartbeat()` 在播放中每 **12s** 上报一次 `playing`（会话 TTL = 剩余曲长 + 5s，间隔过长会提前掉出列表） |
+| **稳定身份** | `NavidromeDataSource.getOrCreateClientUniqueId()` 在 `ChoraNetworkPrefs` 持久化 `chora-xxxxxxxx`，由 `Application.onCreate` 预热；所有 `/rest/*` 与 `/api/*` 请求都带 `X-ND-Client-Unique-Id`，保证 `sessionId` 与 SSE `targetSessionId` 对齐 |
+| **看见别人** | `PlaybackHandoffManager.refreshSessions()` 拉 `GET /api/playback/sessions`；输出设备面板（`JukeboxDeviceBottomSheet`）在打开期间以 5s 轮询渲染「其他设备正在播放」，`isCurrentSession` 的本机行被过滤 |
+| **看见封面** | fork 的 session 负载**只给 id 不给图**，而 Subsonic `getCoverArt.view` 必须带 `u/t/s` 签名。`PlaybackSessionDto.withCoverArt()` 在客户端现签一条 `coverArtUrl`（资产 id 三级兜底：`coverArtId → albumId → songId`，Navidrome 对任意 media id 都能解析封面；老服务端没有 `coverArtId` 时靠后两级仍然出图），行内 `AsyncImage` 用 `Modifier.size(42.dp)` 圆碟渲染 |
+| **封面不重复下载** | 签名 URL 每次轮询都换 `salt`，所以 Coil 的缓存 key **必须**是稳定的 `"handoff_cover_" + (coverArtId ?: songId)`（`memoryCacheKey` + `diskCacheKey`），绝不能用 URL 当 key，否则 5s 一轮全量重下图。`onError` 置位后回落喇叭图标（404 / 401 / 自签 TLS 失败都不能留白碟） |
+| **接管** | `PlaybackHandoffManager.takeover()`：`/rest/getSong.view` 取流 → `seekTo(positionMs)` → 继承 6 维状态（进度/播放意图/音量/输出设备/循环模式/双语歌词）→ **本地起播之后**才异步 `POST /api/playback/sessions/{id}/takeover`，避免「原设备已停、本机未就绪」的空窗 |
+| **被接管** | `/api/events?jwt=`（SSE）常连，仅处理 `event: playbackHandoff`；按 `targetSessionId == myClientId` 过滤（服务端 `broadcastToAll`，不过滤会把别人的接管当成自己的），命中即 `pause()` + Toast + 上报 `paused`，断线 5s 重连 |
+
+关键取舍：
+- **鉴权**：`/api/*` 只认 `X-ND-Authorization`（标准 `Authorization` 会 401，实测），SSE 只能用 `?jwt=` 传 token；代码保留双 header 以兼容反代。
+- **SSE 传输**：Ktor 3 的 `response.body()` 会把流缓冲到底，无法用于 SSE，故 `streamPlaybackHandoffEvents()` 使用原生 `HttpURLConnection` + `BufferedReader` 逐行解析；`readTimeout = 0`（无限流），由 `isActive` 回调与 socket 断开驱动退出。
+- **远程音箱接管**：`targetOutput` 非 `browser/local` 时只调 `/api/jukebox/select` 切设备，曲目由 `MusicService.onMediaItemTransition` 转发；接管时的起始秒通过 MediaItem extras `handoffStartMs` 传递，避免音箱从 0:00 重新起播。本地播放器保持静音（铁律 2）。
+- **接管失败不阻塞播放**：`takeover` POST 的异常只 log（服务端对不存在的会话也返回 200），双语歌词继承在独立协程中尽力而为。
+- **线程铁律**：`ExoPlayer` 只允许在创建它的线程（main）访问，跨线程读 `isPlaying` / `currentPosition` / `volume` / `repeatMode` 抛的是**未捕获**的 `IllegalStateException: Player is accessed on the wrong thread`，直接让进程崩在播歌 12s 后（心跳第一次触发）。因此 `reportPlaybackState()` 只能在 main 调用（player 回调、`serviceMainScope` 合规，`serviceIOScope` 不合规）；必须在 IO 协程里上报时用 `reportPlaybackInline()`，它内部 `withContext(Dispatchers.Main)` 取快照再走网络。
+- **接管 seek 竞态（2026-09-27 修）**：`PlaybackHandoffManager.doTakeoverSeek()` 里紧跟着 `SongHelper.play()` 的 `seekTo(startMs)` 会**静默失效**——此刻窗口时长还是 `C.TIMEBAR_STATE_NOT_AVAILABLE`，Media3 判定 `TIMEBAR_STATE_NO_SEEK` 后不报错也不跳转，表现就是"接管成功但音箱从 0:00 重播"。正确做法是 `seekWhenPrepared()`：先试一次，未落点则挂一次性 `Player.Listener`（`onTimelineChanged` + `onEvents`），等 `isCurrentMediaItemSeekable` 为真再 `seekTo`；落点达成（`currentPosition >= startMs - 1000`）或曲目已被用户换掉（`currentMediaItem.mediaId != expectedMediaId`）立刻 `removeListener`，避免监听器泄漏与"和用户抢进度条"。
+- **退出上报必须走 `shutdownScope`（2026-09-27 修）**：`onTaskRemoved` / `onDestroy` 的 `paused` 上报原先写在 `serviceIOScope.launch{}` 里，而 `onDestroy` 末尾的 `releasePlayerAndScopes()` 会 `serviceIOScope.cancel()` —— 请求刚发出就被砍，其他设备要一直看到这条会话"正在播放"直到 TTL 过期（最长接近一整首歌）。改用 `shutdownScope`（`SupervisorJob + Dispatchers.IO`，存活过 `onDestroy`，与 `saveState` 的 teardown 保存同一策略）+ `NonCancellable` + `withTimeoutOrNull(2500)`。
+- **封面签名走 Subsonic 而非 `/api/*`**：fork 没有暴露封面代理端点，`getCoverArt.view` 需要 `u/t/s`，故沿用 `providers/navidrome` 里 `generateSalt(8)` + `md5Hash(password + salt)` 那套签名，基础地址取 `NavidromeManager.resolveActiveServerUrl(getCurrentServer())`（与音频流同一选路结果，局域网可用时不会绕公网）。`size=100` 目前写死。
+
+**审计补充（2026-09-27）**
+- **验证欠账**：上面标「2026-09-27 修」的两条（seek 竞态、`shutdownScope`）代码已落地但**尚未编译与真机回归**，下一轮第一步是 `./gradlew :app:compileDebugKotlin :app:testDebugUnitTest` → `assembleDebug` → 装机，并实测「手机接管 TV/浏览器会话，起播秒数不为 0」。
+- **未修 · 列表残留**：`refreshSessions()` 在 `checkActiveServers() == false` 或请求抛异常时只 `return emptyList()`，**不清空 `_sessions`**。服务器被删/长时间断网时，面板仍渲染旧会话行且可点击接管一条已不存在的会话。建议：无激活服务器时 `_sessions.value = emptyList()`；有服务器但单次请求失败仍保留旧数据（防闪烁）。
+- **未修 · 封面尺寸偏软**：签名 URL 写死 `size=100`，而行内圆碟 42dp ≈ 126px @xxhdpi。建议提到 `size=192`（服务端缩放成本极低）。
+
 ---
 
 ## 4. 目录结构索引
@@ -123,6 +152,7 @@ app/src/main/java/com/craftworks/music/
 ├── managers/
 │   ├── NavidromeManager.kt              # Navidrome 节点发现、测速选路与鉴权
 │   ├── JukeboxManager.kt                # Jukebox 多输出设备调度与状态机 (遵守四大铁律)
+│   ├── PlaybackHandoffManager.kt        # 多端会话轮询/接管/SSE 互斥停播
 │   ├── settings/
 │   │   ├── LocalDataSettingsManager.kt  # 播放历史、歌单续播状态持久化
 │   │   └── AppearanceSettingsManager.kt # 界面主题、动效风格配置
@@ -155,7 +185,7 @@ app/src/main/java/com/craftworks/music/
 
 ## 5. Navidrome 原生扩展 API 契约与避坑指南
 
-Navidrome 扩展功能（Jukebox 多输出设备与歌词翻译）通过服务端的原生 Go 路由（`nativeapi`）提供支持。客户端必须严格遵循服务端的字段命名与序列化规范：
+Navidrome 扩展功能（Jukebox 多输出设备、歌词翻译、跨设备播放接管 Playback Handoff）通过服务端的原生 Go 路由（`nativeapi`）提供支持。客户端必须严格遵循服务端的字段命名与序列化规范：
 
 ### 5.1 字段命名规范对照 (重大避坑警示)
 
@@ -165,6 +195,11 @@ Navidrome 扩展功能（Jukebox 多输出设备与歌词翻译）通过服务�
 | **Jukebox 播放曲目** | `POST /api/jukebox/play` | `song_id`, `stream_url`, `position` | **snake_case** | `@SerialName("song_id")` | 若误传 camelCase `songId`，Go 解析为空串，报错 `HTTP 400: either song_id or stream_url is required` |
 | **Jukebox 设备状态** | `GET /api/jukebox/status` | `currentTime`, `duration`, `volume`, `deviceId`, `deviceType` | **camelCase** | 保持与响应字段完全一致 | 注意与请求体 snake_case 区分 |
 | **歌词翻译请求** | `POST /api/lyrics/translate` | `songId`, `targetLang`, `force` | **camelCase** | 无需额外下划线转换 | 与 Jukebox 请求格式不同，设计上使用驼峰命名 |
+| **播放会话列表** | `GET /api/playback/sessions` | 无（Header `X-ND-Authorization` + `X-ND-Client-Unique-Id`） | `{"count":N,"sessions":[...]}`，会话字段 **camelCase**：`sessionId`, `songId`, `positionMs`, `coverArtId`, `outputDevice`, `playMode`, `isCurrentSession` | 保持与响应字段完全一致 | `volume` / `playMode` / `bilingual` 服务端是 `omitempty`：**缺失 ≠ 0**，DTO 必须用可空 `Int?` 区分"没上报"与"上报了 0"（服务端把 0 当"未上报"） |
+| **接管会话** | `POST /api/playback/sessions/{id}/takeover` | `action`, `sourceSessionId`, `newPlayerName`, `targetOutput` | `{"status":"...","takenOverSessionId":"...","session":{...}}` | **camelCase** | 对不存在的会话也返回 **200**（`session` 缺失），所以客户端**不能**用状态码判断接管成败，该 POST 的异常只 log |
+| **上报播放状态** | `/rest/reportPlayback`（Subsonic） | 扩展 query：`outputDevice`, `volume`, `playMode`, `bilingualActive` | — | 走 Subsonic 标准鉴权 `u/t/s` | 必须经 `MusicService.reportPlaybackState()` 单一出口，否则某条路径漏字段会让别人看到残缺会话 |
+| **接管事件流** | `GET /api/events?jwt=<JWT>`（SSE） | Query `jwt`（**不能用 header**） | `event: playbackHandoff` + `data: {"targetSessionId":"...","newPlayerName":"..."}` | — | 服务端 `broadcastToAll`，**必须**按 `targetSessionId == myClientId` 过滤，否则会把别人的接管当成自己的；Ktor `response.body()` 会缓冲到底，SSE 只能用 `HttpURLConnection` 逐行读 |
+| **封面签名** | `GET /rest/getCoverArt.view` | Query `id`, `u`, `t`, `s`, `v`, `c`, `size` | 二进制图片 | Subsonic 签名同音频 | `id` 可传 `coverArtId`/`albumId`/`songId` 任意一个；URL 每次换 `salt` ⇒ Coil 缓存 key 必须用稳定 id（见 §3.6） |
 
 ### 5.2 鉴权机制与 401 自动重试
 - **Token 交换**：客户端使用用户凭据调用 `POST /auth/login` 获取 Bearer JWT Token。
@@ -192,6 +227,22 @@ Navidrome 扩展功能（Jukebox 多输出设备与歌词翻译）通过服务�
 ### 6.4 歌词翻译小圆点不亮或无法获取翻译
 1. **原因 1（无缓存 404）**：新歌曲首次播放时无缓存属正常现象，点击「译」即可触发服务端实时翻译。
 2. **原因 2（服务端未配置 API Key）**：Navidrome 服务端未配置翻译引擎（OpenAI/Gemini/DeepSeek）密钥，服务端返回 `HTTP 400 (translation API key not configured)`。
+
+### 6.5 接管成功但对方进度白丢了（从 0:00 重播）
+1. **首要嫌疑：seek 竞态**。`setMediaItems` / `SongHelper.play` 之后立刻 `seekTo()` 会被 Media3 判为 `TIMEBAR_STATE_NO_SEEK` 并**静默丢弃**（不抛异常、logcat 干净）。确认走的是 `PlaybackHandoffManager.seekWhenPrepared()` 而不是裸 `seekTo`。
+2. **远程音箱路径**：进度不是 seek 出来的，而是 `MediaItem.extras["handoffStartMs"]` 传给 `MusicService.onMediaItemTransition` → `JukeboxManager.playSong(id, handoffStartMs/1000)`。若该 extras 丢失（`withHandoffStart()` 未生效）或 `isRemoteOutput` 判错（`outputDevice` 为空串时按 `browser` 处理），音箱就会从 0 起播。
+3. **前置顺序**：远程接管必须先 `await` 完 `JukeboxManager.selectDeviceAwait()` 再本地起播，否则 `onMediaItemTransition` 仍认为输出是本机，音箱压根收不到曲目。
+
+### 6.6 「其他设备正在播放」行没有封面
+1. **签名/选路**：过滤 `HANDOFF:W`，看 `coverArt sign failed`。URL 由 `NavidromeManager.resolveActiveServerUrl(getCurrentServer())` 拼出，如果当前只有公网地址且 DNS 解析失败（日志常见 `Unable to resolve host "<ddns>": No address associated with hostname`），封面和 SSE 会一起失败——这不是封面逻辑的 bug。
+2. **404 属正常回落**：`getCoverArt.view` 对该 id 无图时返回 404，`AsyncImage.onError` 会回落喇叭图标；先确认 `coverArtId → albumId → songId` 三级兜底是否全部为空。
+3. **服务端版本**：老 fork 不返回 `coverArtId`，此时靠 `albumId`/`songId` 兜底；若列表恒无图，先抓 `GET /api/playback/sessions` 原始响应确认字段存在。
+4. **不要按 URL 排查缓存**：图片缓存 key 是 `"handoff_cover_" + (coverArtId ?: songId)`，与 URL 里的 `t`/`s` 无关；换 salt 不应该产生新的网络请求，若抓包看到每 5s 重下同一张图，说明 `memoryCacheKey`/`diskCacheKey` 被改掉了。
+
+### 6.7 其他设备掉线后仍显示"正在播放"
+1. **本端退出上报没发出去**：`onTaskRemoved` / `onDestroy` 的 `paused` 必须跑在 `shutdownScope`（详见 §3.6）。若误用 `serviceIOScope`，会被同一方法末尾的 `cancel()` 掐断。
+2. **心跳间隔**：播放中每 12s 一次 `playing`；会话 TTL = 剩余曲长 + 5s，间隔调大就会"人已经停了还挂在列表里"。
+3. **本端列表残留**：`refreshSessions()` 失败时刻意保留旧数据（防闪烁），所以断网时看到的可能是缓存，判服务端真实状态请直接抓 `/api/playback/sessions`。
 
 ---
 

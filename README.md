@@ -23,6 +23,7 @@ A fast, lightweight, and modern music streaming client for Android and Android T
 - 🔄 **Cloudflare & Reverse Proxy Resilient**: Built-in HTTP 302 cross-protocol/cross-port sniffing to smoothly stream behind Cloudflare Tunnels and reverse proxies.
 - 🌐 **Offline Downloads & Local Library**: Download tracks and albums directly to your device for offline listening.
 - 🚗 **Android Auto Support**: Safe and responsive in-car playback.
+- 🔁 **Playback Handoff (Multi-Device Takeover)**: Every device playing from the same server shows up in the output-device sheet with its track and position; tap **Take over** to resume exactly where the other device left off (progress, play/pause intent, volume, repeat mode, output device and bilingual-lyrics state all inherit), the previous device pauses itself via a server push event, and a Jukebox speaker is re-seeded at the handed-off second instead of restarting at 0:00.
 
 ---
 

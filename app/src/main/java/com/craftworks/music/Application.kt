@@ -18,10 +18,19 @@ class ChoraApplication : Application(), ImageLoaderFactory {
     override fun onCreate() {
         super.onCreate()
         com.craftworks.music.data.datasource.navidrome.NavidromeDataSource.initPersistentSalt(this)
+        // Stable handoff identity must exist before any Subsonic call fires.
+        com.craftworks.music.data.datasource.navidrome.NavidromeDataSource.appContextRef = applicationContext
+        com.craftworks.music.data.datasource.navidrome.NavidromeDataSource.getOrCreateClientUniqueId(this)
         NavidromeManager.init(this)
         LocalProviderManager.init(this)
         com.craftworks.music.managers.DownloadedSongsManager.init(this)
         com.craftworks.music.managers.CoverThemeManager.init(this)
+        // Cross-device handoff: stay subscribed to `/api/events` for
+        // `playbackHandoff` so another device taking over pauses us instantly.
+        com.craftworks.music.managers.PlaybackHandoffManager.startSseListener(this)
+        // Feed the dock's output-device chip with the newest other-device
+        // progress so its ring is meaningful without opening the device sheet.
+        com.craftworks.music.managers.PlaybackHandoffManager.startAmbientPolling()
     }
 
     override fun newImageLoader(): ImageLoader {

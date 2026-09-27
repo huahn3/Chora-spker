@@ -64,6 +64,15 @@
     <string name="NowPlayingTitleAlignment_Left">Links</string>
     <string name="NowPlayingTitleAlignment_Center">Mitte</string>
     <string name="NowPlayingTitleAlignment_Right">Rechts</string>
+
+    <!-- Mini Player Button Layout -->
+    <string name="Setting_MiniPlayerButtons">Mini-Player-Schaltflächen</string>
+    <string name="MiniPlayerButtons_LeftPaired">Links nebeneinander</string>
+    <string name="MiniPlayerButtons_Symmetric">Symmetrisch</string>
+    <string name="MiniPlayerButtons_RightPaired">Rechts nebeneinander</string>
+    <string name="MiniPlayerButtons_LeftPaired_Desc">Cover und Ausgabegerät nebeneinander links, besser mit dem linken Daumen</string>
+    <string name="MiniPlayerButtons_Symmetric_Desc">Cover links, Ausgabegerät rechts (Standard)</string>
+    <string name="MiniPlayerButtons_RightPaired_Desc">Cover und Ausgabegerät nebeneinander rechts, besser mit dem rechten Daumen</string>
     <!-- Now Playing Title Alignment -->
     <string name="Dialog_SetSleepTimer">Sleep-Timer setzen</string>
 </resources>

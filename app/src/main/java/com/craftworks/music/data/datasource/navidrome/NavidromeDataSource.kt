@@ -1,6 +1,7 @@
 package com.craftworks.music.data.datasource.navidrome
 
 import android.annotation.SuppressLint
+import android.content.Context
 import android.util.Log
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
@@ -26,6 +27,7 @@ import com.craftworks.music.providers.navidrome.parseNavidromePlaylistsJSON
 import com.craftworks.music.providers.navidrome.parseNavidromeRadioJSON
 import com.craftworks.music.providers.navidrome.parseNavidromeSearch3JSON
 import com.craftworks.music.providers.navidrome.parseNavidromeSimilarSongsJSON
+import com.craftworks.music.providers.navidrome.parseNavidromeSongJSON
 import com.craftworks.music.providers.navidrome.SubsonicParseException
 import com.craftworks.music.providers.navidrome.parseNavidromeStatus
 import com.craftworks.music.providers.navidrome.parseNavidromeSyncedLyricsJSON
@@ -34,6 +36,7 @@ import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.cache.HttpCache
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.request.get
+import io.ktor.client.request.header
 import io.ktor.client.request.headers
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
@@ -52,9 +55,15 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
+import dagger.hilt.android.qualifiers.ApplicationContext
 
 @Singleton
 class NavidromeDataSource @Inject constructor() {
+    /**
+     * Set once from [ChoraApplication.onCreate] (and again from the Hilt
+     * singleton as a belt-and-braces fallback). Direct `NavidromeDataSource()`
+     * callers in [NavidromeManager] / ping path have no Context of their own.
+     */
     private val json = Json { ignoreUnknownKeys = true }
 
     private val client: HttpClient by lazy {
@@ -70,8 +79,17 @@ class NavidromeDataSource @Inject constructor() {
     private val insecureClient: HttpClient by lazy { buildInsecureClient() }
 
     companion object {
+        const val CLIENT_UNIQUE_ID_HEADER = "X-ND-Client-Unique-Id"
+
+        /** Application context; set from `ChoraApplication.onCreate`. */
+        @Volatile
+        var appContextRef: Context? = null
+
         @Volatile
         private var persistentSalt: String? = null
+
+        @Volatile
+        private var clientUniqueId: String? = null
 
         fun md5Hash(input: String): String {
             val md = MessageDigest.getInstance("MD5")
@@ -90,6 +108,34 @@ class NavidromeDataSource @Inject constructor() {
                 .getSharedPreferences("ChoraNetworkPrefs", android.content.Context.MODE_PRIVATE)
             persistentSalt = prefs.getString("media_salt", null) ?: randomSalt(8).also {
                 prefs.edit().putString("media_salt", it).apply()
+            }
+        }
+
+        /**
+         * Stable per-install client id. The handoff server keys sessions by
+         * `X-ND-Client-Unique-Id`; without a stable value the session id
+         * falls back to a cookie-derived player id that changes on cold start,
+         * duplicating sessions and breaking SSE `targetSessionId` filtering.
+         *
+         * Format: `chora-<8 hex>` — short, URL-safe, and recognizable in the
+         * server's session list / `playerName`.
+         */
+        fun getOrCreateClientUniqueId(context: Context): String {
+            clientUniqueId?.let { return it }
+            synchronized(this) {
+                clientUniqueId?.let { return it }
+                val prefs = context.applicationContext
+                    .getSharedPreferences("ChoraNetworkPrefs", Context.MODE_PRIVATE)
+                val existing = prefs.getString("client_unique_id", null)
+                if (!existing.isNullOrBlank()) {
+                    clientUniqueId = existing
+                    return existing
+                }
+                val fresh = "chora-" + java.util.UUID.randomUUID()
+                    .toString().replace("-", "").take(8)
+                prefs.edit().putString("client_unique_id", fresh).apply()
+                clientUniqueId = fresh
+                return fresh
             }
         }
 
@@ -167,6 +213,7 @@ class NavidromeDataSource @Inject constructor() {
 
         try {
             val response: HttpResponse = activeClient.get(url) {
+                appContextRef?.let { header(CLIENT_UNIQUE_ID_HEADER, getOrCreateClientUniqueId(it)) }
                 // Force network request if ignoreCachedResponse is true
                 if (ignoreCachedResponse) {
                     headers {
@@ -186,6 +233,16 @@ class NavidromeDataSource @Inject constructor() {
                 endpoint.startsWith("getMusicFolders") -> parsedData.addAll(parseNavidromeLibrariesJSON(responseContent))
 
                 endpoint.startsWith("search3")      -> parsedData.addAll(parseNavidromeSearch3JSON(responseContent, baseUrl, server.username, server.password))
+
+                // Single song (Playback Handoff takeover target). Had no branch
+                // at all, so `getNavidromeSong` silently returned null for every
+                // call and the takeover had nothing to play.
+                endpoint.startsWith("getSong.")     -> parsedData.addAll(
+                    listOfNotNull(parseNavidromeSongJSON(responseContent, baseUrl, server.username, server.password))
+                )
+                endpoint.startsWith("getSong?")     -> parsedData.addAll(
+                    listOfNotNull(parseNavidromeSongJSON(responseContent, baseUrl, server.username, server.password))
+                )
 
                 endpoint.startsWith("getAlbumList") -> parsedData.addAll(parseNavidromeAlbumListJSON(responseContent, baseUrl, server.username, server.password))
                 endpoint.startsWith("getAlbum.")    -> parsedData.addAll(parseNavidromeAlbumJSON(responseContent, baseUrl, server.username, server.password)) // Note: getAlbum.view takes an album ID, typically not musicFolderId
@@ -331,12 +388,25 @@ class NavidromeDataSource @Inject constructor() {
     suspend fun reportPlayback(
         songId: String,
         state: String,
-        positionMs: Long
+        positionMs: Long,
+        outputDevice: String? = null,
+        volume: Int? = null,
+        playMode: String? = null,
+        bilingualActive: Boolean? = null
     ) = withContext(Dispatchers.IO) {
         if (songId.isBlank() || songId.startsWith("Local")) return@withContext emptyList()
         val ignoreScrobble = (state == "paused" || state == "stopped")
+        // NOTE: `volume=0` is swallowed server-side (treated as "not sent", stored
+        // as 100 or keeps old value), so mute can never be reported — skip it.
+        val params = buildString {
+            append("reportPlayback.view?mediaId=$songId&id=$songId&mediaType=song&state=$state&positionMs=$positionMs&playbackRate=1.0&ignoreScrobble=$ignoreScrobble")
+            if (!outputDevice.isNullOrBlank()) append("&outputDevice=$outputDevice")
+            if (volume != null && volume in 1..100) append("&volume=$volume")
+            if (!playMode.isNullOrBlank()) append("&playMode=$playMode")
+            if (bilingualActive != null) append("&bilingualActive=$bilingualActive")
+        }
         getRequest(
-            "reportPlayback.view?mediaId=$songId&id=$songId&mediaType=song&state=$state&positionMs=$positionMs&playbackRate=1.0&ignoreScrobble=$ignoreScrobble",
+            params,
             null,
             true
         )

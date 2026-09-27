@@ -130,7 +130,7 @@ fun RadioScreen(
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     contentPadding = PaddingValues(12.dp)
                 ) {
-                    items(radios) { radio ->
+                    items(radios, key = { it.mediaId }) { radio ->
                         RadioCard(
                             radio = radio,
                             onClick = {
