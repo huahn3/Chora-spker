@@ -41,21 +41,52 @@ object DownloadedSongsManager {
     private const val PREFS_NAME = "DownloadedSongsPrefs"
     private const val KEY_RECORDS = "downloaded_records"
 
-    private lateinit var sharedPreferences: SharedPreferences
+    @Volatile
+    private var sharedPreferences: SharedPreferences? = null
+
+    @Volatile
+    private var appContext: Context? = null
+
+    /** Resolves on demand so a download that starts before `init` finished loading
+     *  cannot hit an uninitialized property. */
+    private fun prefs(): SharedPreferences {
+        sharedPreferences?.let { return it }
+        synchronized(this) {
+            sharedPreferences?.let { return it }
+            val ctx = appContext ?: error("DownloadedSongsManager used before init()")
+            return ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .also { sharedPreferences = it }
+        }
+    }
     private val json = Json { ignoreUnknownKeys = true }
     private val httpClient = OkHttpClient()
 
     private val _downloadedRecords = MutableStateFlow<List<DownloadedSongRecord>>(emptyList())
     val downloadedRecords: StateFlow<List<DownloadedSongRecord>> = _downloadedRecords.asStateFlow()
 
+    private var initJob: kotlinx.coroutines.Job? = null
+
+    /**
+     * Called from `Application.onCreate`, i.e. on the critical path before the
+     * first frame. The whole record list lives in one SharedPreferences string
+     * and used to be JSON-decoded synchronously here, which put an O(number of
+     * downloaded songs) parse on the main thread of every cold start. Decode on
+     * a background dispatcher and publish into the flow instead; the only
+     * consumers collect the flow, so they simply re-run once the value lands.
+     */
     fun init(context: Context) {
-        sharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        loadRecords()
+        val ctx = context.applicationContext
+        appContext = ctx
+        if (initJob?.isActive == true) return
+        initJob = CoroutineScope(Dispatchers.IO).launch {
+            sharedPreferences = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            loadRecords()
+        }
     }
 
     private fun loadRecords() {
         try {
-            val raw = sharedPreferences.getString(KEY_RECORDS, null)
+            val raw = prefs().getString(KEY_RECORDS, null)
             if (!raw.isNullOrBlank()) {
                 val list: List<DownloadedSongRecord> = json.decodeFromString(raw)
                 _downloadedRecords.value = list
@@ -68,7 +99,7 @@ object DownloadedSongsManager {
     private fun saveRecords() {
         try {
             val raw = json.encodeToString(_downloadedRecords.value)
-            sharedPreferences.edit { putString(KEY_RECORDS, raw) }
+            prefs().edit { putString(KEY_RECORDS, raw) }
         } catch (e: Exception) {
             Log.e(TAG, "Error saving downloaded records", e)
         }

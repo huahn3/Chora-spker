@@ -130,7 +130,7 @@ fun ThemeDialog(
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
-    val selectedThemeName by rememberAppearanceSettings().appTheme.collectAsState(
+    val selectedThemeName by rememberAppearanceSettings().appTheme.collectAsStateWithLifecycle(
         AppTheme.SYSTEM.name
     )
 
@@ -203,7 +203,7 @@ fun BackgroundDialog(
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
-    val backgroundType by rememberAppearanceSettings().npBackgroundFlow.collectAsState(
+    val backgroundType by rememberAppearanceSettings().npBackgroundFlow.collectAsStateWithLifecycle(
         NowPlayingBackground.ANIMATED_BLUR
     )
 
@@ -269,7 +269,7 @@ fun OledProtectionModeDialog(
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
-    val protectionMode by rememberAppearanceSettings().oledProtectionMode.collectAsState(
+    val protectionMode by rememberAppearanceSettings().oledProtectionMode.collectAsStateWithLifecycle(
         OLEDProtectionMode.OFF
     )
 
@@ -298,7 +298,7 @@ fun NavbarItemsDialog(setShowDialog: (Boolean) -> Unit) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val navItems = (rememberAppearanceSettings().bottomNavItemsFlow
-        .collectAsState(initial = emptyList()).value).toMutableList()
+        .collectAsStateWithLifecycle(initialValue = emptyList()).value).toMutableList()
 
     GenericCheckDialog(
         setShowDialog = setShowDialog,
@@ -336,7 +336,7 @@ fun HomeItemsDialog(setShowDialog: (Boolean) -> Unit) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val homeItems = (rememberAppearanceSettings().homeItemsItemsFlow
-        .collectAsState(initial = emptyList()).value).toMutableList()
+        .collectAsStateWithLifecycle(initialValue = emptyList()).value).toMutableList()
 
     val titleMap = remember {
         mapOf(

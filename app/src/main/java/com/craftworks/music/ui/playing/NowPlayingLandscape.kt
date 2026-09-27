@@ -74,7 +74,8 @@ fun NowPlayingLandscape(
     onToggleQueue: () -> Unit = {},
     onToggleTranslation: () -> Unit = {},
     onForceRetranslate: () -> Unit = {},
-    onRefreshLyrics: () -> Unit = {}
+    onRefreshLyrics: () -> Unit = {},
+    active: Boolean = true
 ) {
     val iconTextColor by animateColorAsState(
         targetValue = iconColor,
@@ -168,7 +169,7 @@ fun NowPlayingLandscape(
                         text = artistInfo,
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Normal,
-                        color = iconTextColor.copy(alpha = 0.7f),
+                        color = iconTextColor.copy(alpha = 0.82f),
                         maxLines = 1,
                         softWrap = false,
                         textAlign = when (titleAlignment) {
@@ -202,7 +203,7 @@ fun NowPlayingLandscape(
                         },
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Medium,
-                        color = iconTextColor.copy(alpha = 0.45f),
+                        color = iconTextColor.copy(alpha = 0.72f),
                         maxLines = 1,
                         textAlign = when (titleAlignment) {
                             NowPlayingAlignment.LEFT -> TextAlign.Start
@@ -228,31 +229,36 @@ fun NowPlayingLandscape(
                     ShuffleButton(
                         it,
                         iconTextColor,
-                        Modifier.size(32.dp)
+                        Modifier.size(48.dp),
+                        iconSize = 32.dp
                     )
 
                     PreviousSongButton(
                         it,
                         iconTextColor,
-                        Modifier.size(48.dp)
+                        Modifier.size(48.dp),
+                        iconSize = 48.dp
                     )
 
                     PlayPauseButton(
                         it,
                         iconTextColor,
-                        Modifier.size(92.dp)
+                        Modifier.size(92.dp),
+                        iconSize = 92.dp
                     )
 
                     NextSongButton(
                         it,
                         iconTextColor,
-                        Modifier.size(48.dp)
+                        Modifier.size(48.dp),
+                        iconSize = 48.dp
                     )
 
                     RepeatButton(
                         it,
                         iconTextColor,
-                        Modifier.size(32.dp)
+                        Modifier.size(48.dp),
+                        iconSize = 32.dp
                     )
                 }
             }
@@ -292,7 +298,8 @@ fun NowPlayingLandscape(
                     onRefreshLyrics,
                     onToggleView = {},
                     onToggleTranslation = onToggleTranslation,
-                    onForceRetranslate = onForceRetranslate
+                    onForceRetranslate = onForceRetranslate,
+                    active = active
                 )
             }
         }

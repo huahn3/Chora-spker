@@ -111,7 +111,8 @@ fun HorizontalSongCard(
                         .diskCacheKey(cacheKey)
                         .crossfade(false)
                         .build(),
-                    contentDescription = "Album Image",
+                    // decorative: the title sits right next to this image
+                contentDescription = null,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier
                         .size(64.dp)
@@ -150,7 +151,7 @@ fun HorizontalSongCard(
                 Text(
                     text = song.mediaMetadata.artist.toString() + if (song.mediaMetadata.recordingYear != 0) " • " + song.mediaMetadata.recordingYear else "",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onBackground.copy(0.75f),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier,
                     maxLines = 1, overflow = TextOverflow.Ellipsis,
                     textAlign = TextAlign.Start
@@ -169,10 +170,10 @@ fun HorizontalSongCard(
                     }
                 }
             }
-            val formattedDuration by remember(song.mediaMetadata.durationMs) {
-                derivedStateOf {
-                    formatMilliseconds((song.mediaMetadata.durationMs?.div(1000))?.toInt() ?: 0)
-                }
+            // Plain remember: this is a pure function of a remembered key, so
+            // there was no observed state for derivedStateOf to track.
+            val formattedDuration = remember(song.mediaMetadata.durationMs) {
+                formatMilliseconds((song.mediaMetadata.durationMs?.div(1000))?.toInt() ?: 0)
             }
             Text(
                 text = formattedDuration,

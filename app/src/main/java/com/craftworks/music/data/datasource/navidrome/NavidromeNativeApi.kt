@@ -57,8 +57,35 @@ private data class LoginRequest(
 private data class LoginResponse(
     val token: String? = null,
     val id: String? = null,
-    val name: String? = null
+    val name: String? = null,
+    val isAdmin: Boolean = false
 )
+
+/** Result of a takeover POST, including the fork's 403 refusal. */
+data class TakeoverOutcome(
+    val ok: Boolean,
+    val forbidden: Boolean = false,
+    val error: String? = null,
+    val response: TakeoverResponse? = null
+)
+
+/** Who the stored credentials belong to, as reported by `/auth/login`. */
+data class LoginIdentity(
+    val userId: String = "",
+    val userName: String = "",
+    val isAdmin: Boolean = false
+)
+
+/**
+ * Mirrors the fork's `canTakeOverSession`: an admin may take over anyone's
+ * session, an ordinary user only their own. Returns true when we cannot tell
+ * (not logged in yet) so the UI stays permissive until the real answer is known.
+ */
+fun canTakeOverSessionOnServer(identity: LoginIdentity?, targetUserId: String?): Boolean {
+    if (identity == null || identity.userId.isBlank()) return true
+    if (identity.isAdmin) return true
+    return !targetUserId.isNullOrBlank() && targetUserId == identity.userId
+}
 
 @Singleton
 class NavidromeNativeApi @Inject constructor() {
@@ -71,6 +98,15 @@ class NavidromeNativeApi @Inject constructor() {
     }
 
     private val tokenCache = ConcurrentHashMap<String, String>()
+
+    /**
+     * Identity of the account we last logged in as, per server. `id` and
+     * `isAdmin` come straight from `/auth/login` and were being parsed and
+     * thrown away; the fork needs both to decide whether a playback takeover is
+     * even permitted (see [canTakeOverSessionOnServer]).
+     */
+    private val identityCache = ConcurrentHashMap<String, LoginIdentity>()
+
     private val loginMutex = Mutex()
 
     private val client: HttpClient by lazy {
@@ -115,6 +151,10 @@ class NavidromeNativeApi @Inject constructor() {
         return if (server.allowSelfSignedCert == true) insecureClient else client
     }
 
+    /** Identity from the last successful login for [server], if any. */
+    fun loginIdentity(server: NavidromeProvider?): LoginIdentity? =
+        server?.let { identityCache[it.id] }
+
     suspend fun getBearerToken(server: NavidromeProvider, forceRefresh: Boolean = false): String? =
         withContext(Dispatchers.IO) {
             val serverId = server.id
@@ -148,6 +188,11 @@ class NavidromeNativeApi @Inject constructor() {
                         val token = loginResp.token
                         if (!token.isNullOrBlank()) {
                             tokenCache[serverId] = token
+                            identityCache[serverId] = LoginIdentity(
+                                userId = loginResp.id.orEmpty(),
+                                userName = loginResp.name.orEmpty(),
+                                isAdmin = loginResp.isAdmin
+                            )
                             Log.d("NAVIDROME_NATIVE", "Authenticated successfully for server $serverId")
                             return@withLock token
                         }
@@ -537,10 +582,12 @@ class NavidromeNativeApi @Inject constructor() {
         action: String = "pause",
         newPlayerName: String? = "Chora (手机端)",
         targetOutput: String? = null
-    ): TakeoverResponse? = withContext(Dispatchers.IO) {
-        val server = NavidromeManager.getCurrentServer() ?: return@withContext null
+    ): TakeoverOutcome = withContext(Dispatchers.IO) {
+        val server = NavidromeManager.getCurrentServer()
+            ?: return@withContext TakeoverOutcome(ok = false, error = "no server")
         val baseUrl = NavidromeManager.resolveActiveServerUrl(server)
-        val token = getBearerToken(server) ?: return@withContext null
+        val token = getBearerToken(server)
+            ?: return@withContext TakeoverOutcome(ok = false, error = "not authenticated")
         val httpClient = getHttpClient(server)
         val payload = json.encodeToString(
             TakeoverRequest.serializer(),
@@ -563,20 +610,35 @@ class NavidromeNativeApi @Inject constructor() {
             var response = post(token)
             if (response.status == HttpStatusCode.Unauthorized) {
                 val newToken = getBearerToken(server, forceRefresh = true)
-                    ?: return@withContext null
+                    ?: return@withContext TakeoverOutcome(ok = false, error = "re-auth failed")
                 response = post(newToken)
             }
             if (response.status == HttpStatusCode.OK) {
-                return@withContext json.decodeFromString(
-                    TakeoverResponse.serializer(),
-                    response.bodyAsText()
+                return@withContext TakeoverOutcome(
+                    ok = true,
+                    response = json.decodeFromString(
+                        TakeoverResponse.serializer(),
+                        response.bodyAsText()
+                    )
+                )
+            }
+            // The fork refuses a cross-user takeover for non-admins
+            // ("not allowed to take over another user's session"). Silently
+            // logging this left the UI claiming success while the other device
+            // kept playing.
+            if (response.status == HttpStatusCode.Forbidden) {
+                return@withContext TakeoverOutcome(
+                    ok = false,
+                    forbidden = true,
+                    error = runCatching { response.bodyAsText() }.getOrNull()
                 )
             }
             Log.w("HANDOFF", "takeover($targetSessionId) -> HTTP ${response.status}")
+            return@withContext TakeoverOutcome(ok = false, error = "HTTP ${response.status}")
         } catch (e: Exception) {
             Log.e("HANDOFF", "Error taking over session $targetSessionId", e)
         }
-        null
+        TakeoverOutcome(ok = false, error = "request failed")
     }
 
     /**
@@ -589,7 +651,8 @@ class NavidromeNativeApi @Inject constructor() {
      */
     suspend fun streamPlaybackHandoffEvents(
         isActive: () -> Boolean,
-        onHandoff: suspend (PlaybackHandoffEvent) -> Unit
+        onHandoff: suspend (PlaybackHandoffEvent) -> Unit,
+        onNowPlayingChanged: (suspend () -> Unit)? = null
     ) {
         val server = NavidromeManager.getCurrentServer() ?: return
         val baseUrl = NavidromeManager.resolveActiveServerUrl(server)
@@ -647,11 +710,21 @@ class NavidromeNativeApi @Inject constructor() {
                                 currentEvent = trimmed.removePrefix("event:").trim()
                             trimmed.startsWith("data:") -> {
                                 val data = trimmed.removePrefix("data:").trim()
-                                if (currentEvent == "playbackHandoff" && data.isNotEmpty()) {
-                                    try {
-                                        onHandoff(json.decodeFromString(PlaybackHandoffEvent.serializer(), data))
-                                    } catch (e: Exception) {
-                                        Log.w("HANDOFF", "Bad handoff payload: ${e.message}")
+                                when {
+                                    currentEvent == "playbackHandoff" && data.isNotEmpty() -> {
+                                        try {
+                                            onHandoff(json.decodeFromString(PlaybackHandoffEvent.serializer(), data))
+                                        } catch (e: Exception) {
+                                            Log.w("HANDOFF", "Bad handoff payload: ${e.message}")
+                                        }
+                                    }
+                                    // The fork broadcasts this on every playback
+                                    // report from any client, so it is a free
+                                    // "some device started/stopped" signal. Use it
+                                    // to refresh now instead of waiting out the
+                                    // ambient poll interval.
+                                    currentEvent == "nowPlayingCount" -> {
+                                        try { onNowPlayingChanged?.invoke() } catch (e: Exception) { }
                                     }
                                 }
                             }

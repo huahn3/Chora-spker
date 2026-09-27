@@ -180,6 +180,9 @@ fun PlayQueueContent(
     val lazyListState = rememberLazyListState()
 
     LaunchedEffect(currentMediaItem) {
+        // Don't yank the list out from under the user: a reorder or an ongoing
+        // fling already put them where they want to be.
+        if (lazyListState.isScrollInProgress) return@LaunchedEffect
         if (currentMediaItem in currentList) {
             val targetIdx = currentList.indexOf(currentMediaItem)
             if (targetIdx >= 0) {

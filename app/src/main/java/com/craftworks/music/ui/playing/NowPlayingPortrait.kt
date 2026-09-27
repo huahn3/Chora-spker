@@ -118,7 +118,8 @@ fun NowPlayingPortrait(
     onOpenJukebox: () -> Unit = {},
     onToggleTranslation: () -> Unit = {},
     onForceRetranslate: () -> Unit = {},
-    onRefreshLyrics: () -> Unit = {}
+    onRefreshLyrics: () -> Unit = {},
+    active: Boolean = true
 ) {
     val iconTextColor by animateColorAsState(
         targetValue = iconColor,
@@ -295,6 +296,7 @@ fun NowPlayingPortrait(
                                 color = iconTextColor,
                                 isLandscape = false,
                                 mediaController = mediaController,
+                                active = active,
                                 onRefreshLyrics = onRefreshLyrics,
                                 onToggleView = {
                                     flipToPage(0)
@@ -448,7 +450,7 @@ fun NowPlayingPortrait(
                     text = artistInfo,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Normal,
-                    color = iconTextColor.copy(alpha = 0.7f),
+                    color = iconTextColor.copy(alpha = 0.82f),
                     maxLines = 1,
                     softWrap = false,
                     textAlign = when (titleAlignment) {
@@ -482,7 +484,7 @@ fun NowPlayingPortrait(
                     },
                     style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.Medium,
-                    color = iconTextColor.copy(alpha = 0.45f),
+                    color = iconTextColor.copy(alpha = 0.72f),
                     maxLines = 1,
                     textAlign = when (titleAlignment) {
                         NowPlayingAlignment.LEFT -> TextAlign.Start
@@ -509,11 +511,16 @@ fun NowPlayingPortrait(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 ChoraMediaLibraryService.getInstance()?.player?.let { player ->
-                    ShuffleButton(player, iconTextColor, Modifier.size(24.dp))
-                    PreviousSongButton(player, iconTextColor, Modifier.size(40.dp))
-                    PlayPauseButton(player, iconTextColor, Modifier.size(80.dp))
-                    NextSongButton(player, iconTextColor, Modifier.size(40.dp))
-                    RepeatButton(player, iconTextColor, Modifier.size(24.dp))
+                    // Touch target and glyph are now separate arguments. Targets
+                    // are all >= 48dp (they used to be 24/40/80/40/24 because one
+                    // Modifier went to both the IconButton and its Icon), while
+                    // the glyphs keep the original 24/40/80/40/24 hierarchy that
+                    // made the centre button read as the hero play key.
+                    ShuffleButton(player, iconTextColor, Modifier.size(48.dp), iconSize = 24.dp)
+                    PreviousSongButton(player, iconTextColor, Modifier.size(48.dp), iconSize = 40.dp)
+                    PlayPauseButton(player, iconTextColor, Modifier.size(80.dp), iconSize = 80.dp)
+                    NextSongButton(player, iconTextColor, Modifier.size(48.dp), iconSize = 40.dp)
+                    RepeatButton(player, iconTextColor, Modifier.size(48.dp), iconSize = 24.dp)
                 }
             }
 

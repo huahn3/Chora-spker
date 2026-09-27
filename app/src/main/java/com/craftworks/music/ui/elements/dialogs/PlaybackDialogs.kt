@@ -29,6 +29,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.craftworks.music.R
 import com.craftworks.music.managers.settings.PlaybackSettingsManager
+import com.craftworks.music.managers.settings.rememberPlaybackSettings
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.craftworks.music.ui.elements.bounceClick
 import kotlinx.coroutines.launch
 
@@ -55,8 +57,13 @@ fun TranscodingBitrateDialog(
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
 
-    val transcodingBitrateWifi by PlaybackSettingsManager(context).wifiTranscodingBitrateFlow.collectAsState("")
-    val transcodingBitrateData by PlaybackSettingsManager(context).mobileDataTranscodingBitrateFlow.collectAsState("")
+    // Remembered manager: each `xxxFlow` is an *instance* property, so
+    // `PlaybackSettingsManager(context)` on every recomposition handed
+    // collectAsState a brand-new Flow, restarting the DataStore read and
+    // dropping the row back to "" for a frame.
+    val settings = rememberPlaybackSettings()
+    val transcodingBitrateWifi by settings.wifiTranscodingBitrateFlow.collectAsStateWithLifecycle("")
+    val transcodingBitrateData by settings.mobileDataTranscodingBitrateFlow.collectAsStateWithLifecycle("")
 
     val transcodingBitrateList = listOf(
         "1",
@@ -98,9 +105,9 @@ fun TranscodingBitrateDialog(
                             onClick = {
                                 coroutineScope.launch {
                                     if (isWifiDialog)
-                                        PlaybackSettingsManager(context).setWifiTranscodingBitrate(bitrate)
+                                        settings.setWifiTranscodingBitrate(bitrate)
                                     else
-                                        PlaybackSettingsManager(context).setMobileDataTranscodingBitrate(bitrate)
+                                        settings.setMobileDataTranscodingBitrate(bitrate)
                                 }
                                 setShowDialog(false)
                             },
@@ -115,9 +122,9 @@ fun TranscodingBitrateDialog(
                         onClick = {
                             coroutineScope.launch {
                                 if (isWifiDialog)
-                                    PlaybackSettingsManager(context).setWifiTranscodingBitrate(bitrate)
+                                    settings.setWifiTranscodingBitrate(bitrate)
                                 else
-                                    PlaybackSettingsManager(context).setMobileDataTranscodingBitrate(bitrate)
+                                    settings.setMobileDataTranscodingBitrate(bitrate)
                             }
                             setShowDialog(false)
                         },
@@ -144,7 +151,8 @@ fun TranscodingFormatDialog(
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
 
-    val transcodingFormat by PlaybackSettingsManager(context).transcodingFormatFlow.collectAsState("")
+    val settings = rememberPlaybackSettings()
+    val transcodingFormat by settings.transcodingFormatFlow.collectAsStateWithLifecycle("")
 
     val transcodingFormats = listOf(
         "mp3",
@@ -178,7 +186,7 @@ fun TranscodingFormatDialog(
                             selected = format == transcodingFormat,
                             onClick = {
                                 coroutineScope.launch {
-                                    PlaybackSettingsManager(context).setTranscodingFormat(format)
+                                    settings.setTranscodingFormat(format)
                                 }
                                 setShowDialog(false)
                             },
@@ -189,7 +197,7 @@ fun TranscodingFormatDialog(
                         selected = format == transcodingFormat,
                         onClick = {
                             coroutineScope.launch {
-                                PlaybackSettingsManager(context).setTranscodingFormat(format)
+                                settings.setTranscodingFormat(format)
                             }
                             setShowDialog(false)
                         },

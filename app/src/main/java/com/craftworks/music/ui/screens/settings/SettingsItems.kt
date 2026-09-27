@@ -63,7 +63,8 @@ fun SettingsSwitch(
     ) {
         Icon(
             imageVector = settingsIcon,
-            contentDescription = "Settings Icon",
+            // decorative: the row's own text is the label
+            contentDescription = null,
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier
                 .padding(start = 20.dp, end = 16.dp)
@@ -116,7 +117,8 @@ fun SettingsDialogButton(
     ) {
         Icon(
             imageVector = settingsIcon,
-            contentDescription = "Settings Icon",
+            // decorative: the row's own text is the label
+            contentDescription = null,
             tint = if (enabled == true)
                 MaterialTheme.colorScheme.onSurfaceVariant
             else

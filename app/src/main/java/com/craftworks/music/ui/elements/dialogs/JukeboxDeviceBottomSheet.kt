@@ -29,6 +29,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -68,6 +69,9 @@ import com.craftworks.music.data.model.JukeboxDevice
 import com.craftworks.music.data.model.PlaybackSessionDto
 import com.craftworks.music.managers.JukeboxManager
 import com.craftworks.music.managers.PlaybackHandoffManager
+import com.craftworks.music.managers.NavidromeManager
+import com.craftworks.music.data.datasource.navidrome.NavidromeNativeApi
+import com.craftworks.music.data.datasource.navidrome.canTakeOverSessionOnServer
 import com.craftworks.music.player.ChoraMediaLibraryService
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -78,6 +82,7 @@ fun JukeboxDeviceBottomSheet(
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val context = LocalContext.current
+    val nativeApi = remember { NavidromeNativeApi() }
 
     val devices by JukeboxManager.devices.collectAsStateWithLifecycle()
     val selectedDeviceId by JukeboxManager.selectedDeviceId.collectAsStateWithLifecycle()
@@ -89,6 +94,9 @@ fun JukeboxDeviceBottomSheet(
     // Other devices' live sessions (Playback Handoff). Our own row is filtered
     // out — taking over yourself is a no-op.
     val handoffSessions by PlaybackHandoffManager.sessions.collectAsStateWithLifecycle()
+    // The fork only lets an admin take over another user's session. Offering a
+    // 接管 button that the server will 403 on is worse than saying why.
+    val myIdentity = remember { NavidromeManager.getCurrentServer()?.let { nativeApi.loginIdentity(it) } }
     val takeoverInFlight by PlaybackHandoffManager.takeoverInFlight.collectAsStateWithLifecycle()
     val otherSessions = handoffSessions.filter { !it.isCurrentSession }
         .sortedBy { it.sessionId }
@@ -224,6 +232,7 @@ fun JukeboxDeviceBottomSheet(
                         HandoffSessionRow(
                             session = session,
                             isTakingOver = takeoverInFlight == session.sessionId,
+                            canTakeOver = canTakeOverSessionOnServer(myIdentity, session.userId),
                             onClick = {
                                 val service = ChoraMediaLibraryService.getInstance()
                                 val repo = service?.songRepository
@@ -433,6 +442,7 @@ private fun DeviceRowItem(
 private fun HandoffSessionRow(
     session: PlaybackSessionDto,
     isTakingOver: Boolean,
+    canTakeOver: Boolean,
     onClick: () -> Unit
 ) {
     val rowShape = RoundedCornerShape(18.dp)
@@ -448,7 +458,7 @@ private fun HandoffSessionRow(
                 MaterialTheme.colorScheme.primary.copy(alpha = 0.18f),
                 rowShape
             )
-            .clickable(enabled = !isTakingOver, onClick = onClick)
+            .clickable(enabled = !isTakingOver && canTakeOver, onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 12.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
@@ -546,10 +556,11 @@ private fun HandoffSessionRow(
         }
 
         Text(
-            text = "接管",
+            text = if (canTakeOver) "接管" else "仅管理员可接管",
             style = MaterialTheme.typography.labelLarge,
             fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.primary
+            color = if (canTakeOver) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
         )
     }
 }

@@ -11,6 +11,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.Slider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -48,9 +49,9 @@ fun TvS_PlaybackScreen() {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
 
-    val transcodingBitrateWifi by rememberPlaybackSettings().wifiTranscodingBitrateFlow.collectAsState("")
-    val transcodingBitrateData by rememberPlaybackSettings().mobileDataTranscodingBitrateFlow.collectAsState("")
-    val transcodingFormat by rememberPlaybackSettings().transcodingFormatFlow.collectAsState("opus")
+    val transcodingBitrateWifi by rememberPlaybackSettings().wifiTranscodingBitrateFlow.collectAsStateWithLifecycle("")
+    val transcodingBitrateData by rememberPlaybackSettings().mobileDataTranscodingBitrateFlow.collectAsStateWithLifecycle("")
+    val transcodingFormat by rememberPlaybackSettings().transcodingFormatFlow.collectAsStateWithLifecycle("opus")
     val transcodingFormatEnabled by remember {
         derivedStateOf {
             transcodingBitrateData != "No Transcoding" || transcodingBitrateWifi != "No Transcoding"
@@ -91,7 +92,7 @@ fun TvS_PlaybackScreen() {
         }
 
         item {
-            val sliderValue by rememberPlaybackSettings().scrobblePercentFlow.collectAsState(7)
+            val sliderValue by rememberPlaybackSettings().scrobblePercentFlow.collectAsStateWithLifecycle(7)
 
             Surface(
                 shape = MaterialTheme.shapes.medium,

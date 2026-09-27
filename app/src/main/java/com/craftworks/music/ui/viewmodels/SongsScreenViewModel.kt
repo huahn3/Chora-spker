@@ -9,7 +9,7 @@ import com.craftworks.music.managers.DataRefreshManager
 import com.craftworks.music.managers.settings.LocalDataSettingsManager
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -108,17 +108,26 @@ class SongsScreenViewModel @Inject constructor(
         }
     }
 
-    fun search(query: String){
+    // Kept and cancelled like getSongsJob: without it every keystroke launched
+    // its own searchSongs() request, so an 8 character query fired 8 concurrent
+    // network calls and `_isLoading` was settled by whichever finished last.
+    private var searchJob: Job? = null
+    fun search(query: String) {
         if (query.isBlank()) {
+            searchJob?.cancel()
             _searchResults.value = emptyList()
             return
         }
-        viewModelScope.launch {
+        searchJob?.cancel()
+        searchJob = viewModelScope.launch {
+            // 250 ms of quiet before hitting the network.
+            delay(250L)
             _isLoading.value = true
-            coroutineScope {
+            try {
                 _searchResults.value = songRepository.searchSongs(query)
+            } finally {
+                _isLoading.value = false
             }
-            _isLoading.value = false
         }
     }
     fun setShowFavoritesOnly(showFavorites: Boolean) {

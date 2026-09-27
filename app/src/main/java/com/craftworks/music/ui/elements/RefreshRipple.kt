@@ -23,6 +23,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.craftworks.music.managers.settings.AppearanceSettingsManager
+import kotlinx.coroutines.launch
 import kotlin.math.max
 import kotlin.math.min
 
@@ -57,20 +58,23 @@ fun RippleEffect(
     LaunchedEffect(key) {
         if (key == 0) return@LaunchedEffect
         progressAnim.snapTo(0f)
+        // `in_time` only has to advance WHILE the ripple is on screen. The old
+        // `LaunchedEffect(Unit) { while (true) { timeAnim.animateTo(...) } }` ran
+        // for the whole time this composable existed, invalidating the draw phase
+        // every frame even though the `progressAnim.value > 0f && < 1f` guard
+        // below drew nothing — and this lives permanently on Home and Songs.
+        timeAnim.snapTo(0f)
+        launch {
+            timeAnim.animateTo(
+                10000f,
+                animationSpec = tween(durationMillis.toInt(), easing = LinearEasing)
+            )
+        }
         progressAnim.animateTo(
             1f,
             animationSpec = tween(durationMillis.toInt(), easing = LinearEasing)
         )
         onFinished()
-    }
-
-    LaunchedEffect(Unit) {
-        while (true) {
-            timeAnim.animateTo(
-                timeAnim.value + 10000f,
-                animationSpec = tween(10000, easing = LinearEasing)
-            )
-        }
     }
 
     Canvas(modifier = modifier.fillMaxSize()) {

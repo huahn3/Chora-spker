@@ -5,6 +5,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -43,39 +44,36 @@ fun Modifier.coverWash(
     layout: CoverWashLayout,
     base: Color,
     overlay: Color = Color.Transparent
-): Modifier = drawBehind {
-    drawRect(base)
-
-    if (colors.isNotEmpty()) {
-        val w = size.width
-        val h = size.height
-
-        // Same relative centers as the player background.
-        val centers = arrayOf(
-            Offset(w * 1.1f, h * 0.1f),
-            Offset(w / 5f, h),
-            Offset(w * 0.05f, h / 2f),
-            Offset(w, h * 0.9f)
+): Modifier = drawWithCache {
+    // The four radial brushes used to be allocated inside a plain `drawBehind`,
+    // i.e. re-created (four Brush objects + four shaders) on every invalidated
+    // frame. This block re-runs only when the size or the inputs change.
+    val w = size.width
+    val h = size.height
+    val centers = arrayOf(
+        Offset(w * 1.1f, h * 0.1f),
+        Offset(w / 5f, h),
+        Offset(w * 0.05f, h / 2f),
+        Offset(w, h * 0.9f)
+    )
+    val radii = when (layout) {
+        CoverWashLayout.FULLSCREEN -> floatArrayOf(w * 2f, h, h, h)
+        CoverWashLayout.COMPACT -> floatArrayOf(w, w * 0.8f, w * 0.7f, w * 0.85f)
+    }
+    val blobBrushes = List(centers.size) { index ->
+        val color = colors.getOrNull(index) ?: colors.firstOrNull() ?: Color.Transparent
+        Brush.radialGradient(
+            colors = listOf(color, Color.Transparent),
+            center = centers[index],
+            radius = radii[index]
         )
-        val radii = when (layout) {
-            CoverWashLayout.FULLSCREEN -> floatArrayOf(w * 2f, h, h, h)
-            CoverWashLayout.COMPACT -> floatArrayOf(w, w * 0.8f, w * 0.7f, w * 0.85f)
-        }
-
-        centers.forEachIndexed { index, center ->
-            val color = colors.getOrNull(index) ?: colors.firstOrNull()
-                ?: return@forEachIndexed
-            drawRect(
-                Brush.radialGradient(
-                    colors = listOf(color, Color.Transparent),
-                    center = center,
-                    radius = radii[index]
-                )
-            )
-        }
     }
 
-    drawRect(overlay)
+    onDrawBehind {
+        drawRect(base)
+        blobBrushes.forEach { drawRect(it) }
+        drawRect(overlay)
+    }
 }
 
 /**

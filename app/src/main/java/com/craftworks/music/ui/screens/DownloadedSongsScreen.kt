@@ -121,10 +121,24 @@ fun DownloadedSongsScreen(
     var showFolderDialog by remember { mutableStateOf(false) }
 
     val isSyncingLyrics by viewModel.isSyncingLyrics.collectAsStateWithLifecycle()
-    val missingLyricsCount = allSongs.count { it.mediaMetadata.extras?.getBoolean("hasLyrics", false) == false }
-
-    val downloadedCount = allSongs.count { it.mediaMetadata.extras?.getBoolean("isDownloaded", false) == true }
-    val localFolderCount = allSongs.count { it.mediaMetadata.extras?.getBoolean("isLocalFolder", false) == true }
+    // Three separate count{} passes over the whole library, re-run on every
+    // recomposition of this screen (songs, query, syncing, loading). One
+    // remembered pass instead.
+    val songCounts = remember(allSongs) {
+        var missingLyrics = 0
+        var downloaded = 0
+        var localFolders = 0
+        allSongs.forEach { song ->
+            val extras = song.mediaMetadata.extras
+            if (extras?.getBoolean("hasLyrics", false) == false) missingLyrics++
+            if (extras?.getBoolean("isDownloaded", false) == true) downloaded++
+            if (extras?.getBoolean("isLocalFolder", false) == true) localFolders++
+        }
+        Triple(missingLyrics, downloaded, localFolders)
+    }
+    val missingLyricsCount = songCounts.first
+    val downloadedCount = songCounts.second
+    val localFolderCount = songCounts.third
 
     // SAF Directory Picker launcher
     val folderPickerLauncher = rememberLauncherForActivityResult(
@@ -702,14 +716,14 @@ fun DownloadedSongItem(
                         Text(
                             text = sizeText,
                             style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
                         )
                     }
                     if (durationText.isNotEmpty()) {
                         Text(
                             text = "• $durationText",
                             style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
                         )
                     }
                 }

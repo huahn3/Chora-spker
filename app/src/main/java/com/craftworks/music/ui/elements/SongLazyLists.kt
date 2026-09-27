@@ -85,6 +85,14 @@ fun SongsHorizontalColumn(
     val canLoadMore by (viewModel?.canLoadMore ?: fallbackCanLoadMore)
         .collectAsStateWithLifecycle()
 
+    // Was computed inside the LazyColumn content lambda, i.e. re-grouped the
+    // entire library on every recomposition of that lambda.
+    val groupedSongs = remember(songList) {
+        songList.groupBy { song ->
+            if (song.mediaMetadata.extras?.getString("navidromeID")?.startsWith("Local_") == true) "Local" else "Navidrome"
+        }
+    }
+
     if (NavidromeManager.checkActiveServers() && isSearch == false && !showFavoritesOnly){
         LaunchedEffect(listState, songList.size, canLoadMore) {
             if (!canLoadMore) return@LaunchedEffect
@@ -112,11 +120,6 @@ fun SongsHorizontalColumn(
         state = listState,
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        // Group songs by their source (Local or Navidrome)
-        val groupedSongs = songList.groupBy { song ->
-            if (song.mediaMetadata.extras?.getString("navidromeID")?.startsWith("Local_") == true) "Local" else "Navidrome"
-        }
-
         groupedSongs.forEach { (groupName, songsInGroup) ->
             if (showDividers && groupedSongs.size > 1) {
                 item {
@@ -134,7 +137,7 @@ fun SongsHorizontalColumn(
                             else -> ""
                         },
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier
                             .fillMaxWidth()
                             //.background(MaterialTheme.colorScheme.background)
@@ -179,9 +182,12 @@ fun AlbumGrid(
 
     val showDividers by rememberAppearanceSettings().showProviderDividersFlow.collectAsStateWithLifecycle(true)
 
-    // Group songs by their source (Local or Navidrome)
-    val groupedAlbums = albums.groupBy { song ->
-        if (song.mediaMetadata.extras?.getString("navidromeID")?.startsWith("Local_") == true) "Local" else "Navidrome"
+    // Grouping walked the whole library on every recomposition; the key is the
+    // list itself, which is what actually changes the result.
+    val groupedAlbums = remember(albums) {
+        albums.groupBy { song ->
+            if (song.mediaMetadata.extras?.getString("navidromeID")?.startsWith("Local_") == true) "Local" else "Navidrome"
+        }
     }
 
     if (NavidromeManager.checkActiveServers() && isSearch == false) {
@@ -229,7 +235,7 @@ fun AlbumGrid(
                                 else -> ""
                             },
                             style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(8.dp)
@@ -311,9 +317,12 @@ fun AlbumGrid(
 
     val showDividers by rememberAppearanceSettings().showProviderDividersFlow.collectAsStateWithLifecycle(true)
 
-    // Group songs by their source (Local or Navidrome)
-    val groupedAlbums = albums.groupBy { song ->
-        if (song.mediaMetadata.extras?.getString("navidromeID")?.startsWith("Local_") == true) "Local" else "Navidrome"
+    // Grouping walked the whole library on every recomposition; the key is the
+    // list itself, which is what actually changes the result.
+    val groupedAlbums = remember(albums) {
+        albums.groupBy { song ->
+            if (song.mediaMetadata.extras?.getString("navidromeID")?.startsWith("Local_") == true) "Local" else "Navidrome"
+        }
     }
 
     LazyVerticalGrid(
@@ -343,7 +352,7 @@ fun AlbumGrid(
                                 else -> ""
                             },
                             style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(8.dp)
@@ -448,7 +457,7 @@ fun AlbumRow(
                         Text(
                             text = stringResource(R.string.Source_Local),
                             style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier
                                 .rotateVertically(),
                         )
@@ -464,7 +473,9 @@ fun AlbumRow(
                 onPlay = {
                     onPlay(album)
                 },
-                modifier = Modifier.animateItem()
+                modifier = Modifier
+                    .width(128.dp)
+                    .animateItem()
             )
         }
     }
@@ -481,8 +492,10 @@ fun ArtistsGrid(
     val gridState = rememberLazyGridState()
     val showProviderDividers by rememberAppearanceSettings().showProviderDividersFlow.collectAsStateWithLifecycle(true)
 
-    val groupedArtists = artists.groupBy { artist ->
-        if (artist.navidromeID.startsWith("Local_")) "Local" else "Navidrome"
+    val groupedArtists = remember(artists) {
+        artists.groupBy { artist ->
+            if (artist.navidromeID.startsWith("Local_")) "Local" else "Navidrome"
+        }
     }
 
     LazyVerticalGrid(
@@ -512,7 +525,7 @@ fun ArtistsGrid(
                                 else -> ""
                             },
                             style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(8.dp)
@@ -520,7 +533,10 @@ fun ArtistsGrid(
                     }
 
                 }
-                itemsIndexed(artistsInGroup) { index, artist ->
+                // Keyed: without it LazyLayout falls back to index identity, so a
+                // filter/sort change disposed and rebuilt every shifted item
+                // (and its Coil request) instead of moving it.
+                itemsIndexed(artistsInGroup, key = { _, a -> a.navidromeID }) { index, artist ->
                     ArtistCard(artist = artist, onClick = {
                         onArtistSelected(artist)
                     })

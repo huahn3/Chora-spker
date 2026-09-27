@@ -63,7 +63,7 @@ fun TvS_AppearanceScreen() {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
 
-    val nowPlayingTitleAlignment by rememberAppearanceSettings().nowPlayingLyricsAlignment.collectAsState(
+    val nowPlayingTitleAlignment by rememberAppearanceSettings().nowPlayingLyricsAlignment.collectAsStateWithLifecycle(
         NowPlayingAlignment.LEFT
     )
 
@@ -76,7 +76,7 @@ fun TvS_AppearanceScreen() {
         item {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
 
-                val username by rememberAppearanceSettings().usernameFlow.collectAsState("Username")
+                val username by rememberAppearanceSettings().usernameFlow.collectAsStateWithLifecycle("Username")
 
                 SettingsButtonItem(
                     title = stringResource(R.string.Setting_Username),
@@ -86,7 +86,7 @@ fun TvS_AppearanceScreen() {
                 )
 
                 // Theme
-                val selectedTheme by rememberAppearanceSettings().appTheme.collectAsState(
+                val selectedTheme by rememberAppearanceSettings().appTheme.collectAsStateWithLifecycle(
                     AppTheme.SYSTEM.name
                 )
                 val themes = listOf(
@@ -108,7 +108,7 @@ fun TvS_AppearanceScreen() {
                 )
 
                 // Background Style
-                val backgroundType by rememberAppearanceSettings().npBackgroundFlow.collectAsState(
+                val backgroundType by rememberAppearanceSettings().npBackgroundFlow.collectAsStateWithLifecycle(
                     NowPlayingBackground.STATIC_BLUR
                 )
                 val backgroundLabels = mapOf(
@@ -127,7 +127,7 @@ fun TvS_AppearanceScreen() {
                 )
 
                 // OLED Protection Mode
-                val oledProtection by rememberAppearanceSettings().oledProtectionMode.collectAsState(
+                val oledProtection by rememberAppearanceSettings().oledProtectionMode.collectAsStateWithLifecycle(
                     OLEDProtectionMode.OFF
                 )
                 val oledLabels = mapOf(
@@ -146,7 +146,7 @@ fun TvS_AppearanceScreen() {
                 )
 
                 // Screen standby
-                val screenStandby by rememberAppearanceSettings().disableScreenStandby.collectAsState(
+                val screenStandby by rememberAppearanceSettings().disableScreenStandby.collectAsStateWithLifecycle(
                     true
                 )
                 SettingsSwitchItem(
@@ -161,7 +161,7 @@ fun TvS_AppearanceScreen() {
                 )
 
                 // Nav Items
-                val enabledNavbarItems by rememberAppearanceSettings().bottomNavItemsFlow.collectAsState(
+                val enabledNavbarItems by rememberAppearanceSettings().bottomNavItemsFlow.collectAsStateWithLifecycle(
                     emptyList()
                 )
 
@@ -179,7 +179,7 @@ fun TvS_AppearanceScreen() {
                     "recently_added" to R.string.recently_added,
                     "most_played" to R.string.most_played
                 )
-                val enabledHomeItems by rememberAppearanceSettings().homeItemsItemsFlow.collectAsState(
+                val enabledHomeItems by rememberAppearanceSettings().homeItemsItemsFlow.collectAsStateWithLifecycle(
                     emptyList()
                 )
 
@@ -215,7 +215,7 @@ fun TvS_AppearanceScreen() {
         item {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 // Lyrics blur
-                val nowPlayingLyricsBlur by rememberAppearanceSettings().nowPlayingLyricsBlurFlow.collectAsState(
+                val nowPlayingLyricsBlur by rememberAppearanceSettings().nowPlayingLyricsBlurFlow.collectAsStateWithLifecycle(
                     true
                 )
                 SettingsSwitchItem(
@@ -254,7 +254,7 @@ fun TvS_AppearanceScreen() {
                 )
 
                 // More Song Info
-                val showMoreInfo by rememberAppearanceSettings().showMoreInfoFlow.collectAsState(
+                val showMoreInfo by rememberAppearanceSettings().showMoreInfoFlow.collectAsStateWithLifecycle(
                     true
                 )
                 SettingsSwitchItem(
@@ -269,7 +269,7 @@ fun TvS_AppearanceScreen() {
                 )
 
                 // Show Navidrome Logo
-                val showNavidromeLogo by rememberAppearanceSettings().showNavidromeLogoFlow.collectAsState(
+                val showNavidromeLogo by rememberAppearanceSettings().showNavidromeLogoFlow.collectAsStateWithLifecycle(
                     true
                 )
                 SettingsSwitchItem(
@@ -284,7 +284,7 @@ fun TvS_AppearanceScreen() {
                 )
 
                 // Show Provider Dividers
-                val showProviderDividers by rememberAppearanceSettings().showProviderDividersFlow.collectAsState(
+                val showProviderDividers by rememberAppearanceSettings().showProviderDividersFlow.collectAsStateWithLifecycle(
                     true
                 )
                 SettingsSwitchItem(
@@ -300,7 +300,7 @@ fun TvS_AppearanceScreen() {
 
                 // Refresh Ripple
                 /*
-                val refreshRipple by rememberAppearanceSettings().refreshAnimationFlow.collectAsState(
+                val refreshRipple by rememberAppearanceSettings().refreshAnimationFlow.collectAsStateWithLifecycle(
                     true
                 )
                 SettingsSwitchItem(
@@ -317,7 +317,7 @@ fun TvS_AppearanceScreen() {
                 */
 
                 // Track numbers in album view
-                val showTrackNumbers by rememberAppearanceSettings().showTrackNumbersFlow.collectAsState(
+                val showTrackNumbers by rememberAppearanceSettings().showTrackNumbersFlow.collectAsStateWithLifecycle(
                     true
                 )
                 SettingsSwitchItem(
@@ -335,7 +335,7 @@ fun TvS_AppearanceScreen() {
 
         // Lyrics Animation Speed Slider
         item {
-            val lyricsAnimationSpeed by rememberAppearanceSettings().lyricsAnimationSpeedFlow.collectAsState(
+            val lyricsAnimationSpeed by rememberAppearanceSettings().lyricsAnimationSpeedFlow.collectAsStateWithLifecycle(
                 1200
             )
             val sliderValue = 2400f - lyricsAnimationSpeed.toFloat() + 600f

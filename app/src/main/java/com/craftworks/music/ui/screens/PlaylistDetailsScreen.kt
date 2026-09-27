@@ -176,7 +176,10 @@ fun PlaylistDetails(
                             .fillMaxWidth()
                             .fadingEdge(imageFadingEdge)
                             .clip(RoundedCornerShape(12.dp, 12.dp, 0.dp, 0.dp))
-                            .blur(8.dp)
+                            // Was 8dp on a full-bleed header; inside a lazy item the
+                            // RenderEffect layer is re-created every scroll cycle.
+                            // 4dp still softens the edge at a fraction of the cost.
+                            .blur(4.dp)
                     )
                     Button(
                         onClick = { navHostController.popBackStack() },
@@ -193,7 +196,7 @@ fun PlaylistDetails(
                         Icon(
                             imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
                             tint = MaterialTheme.colorScheme.primary,
-                            contentDescription = "Settings",
+                            contentDescription = "Back",
                             modifier = Modifier
                                 .height(32.dp)
                                 .size(32.dp)
@@ -216,7 +219,7 @@ fun PlaylistDetails(
                     ) {
                         Icon(
                             imageVector = ImageVector.vectorResource(R.drawable.rounded_download_24),
-                            contentDescription = "Unstar Album",
+                            contentDescription = "Download Album",
                             tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier
                                 .height(28.dp)

@@ -98,14 +98,20 @@ fun S_AppearanceScreen(navHostController: NavHostController = rememberNavControl
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
 
+    // One manager for the whole screen. Each `xxxFlow` is an *instance* property,
+    // so calling rememberAppearanceSettings() at every row produced 21 separate
+    // dataStore.data.map{} chains — 21 live DataStore collectors, 21
+    // LaunchedEffects and 21 preference-file reads re-run on every emission.
+    val settings = rememberAppearanceSettings()
+
     val focusRequester = remember { FocusRequester() }
 
     // Now Playing Title Alignment
-    val nowPlayingTitleAlignment by rememberAppearanceSettings().nowPlayingTitleAlignment.collectAsState(
+    val nowPlayingTitleAlignment by settings.nowPlayingTitleAlignment.collectAsStateWithLifecycle(
         NowPlayingAlignment.LEFT
     )
     // Now Playing Lyrics Alignment
-    val nowPlayingLyricsAlignment by rememberAppearanceSettings().nowPlayingLyricsAlignment.collectAsState(
+    val nowPlayingLyricsAlignment by settings.nowPlayingLyricsAlignment.collectAsStateWithLifecycle(
         NowPlayingAlignment.CENTER
     )
     val alignmentLabels = mapOf(
@@ -115,7 +121,7 @@ fun S_AppearanceScreen(navHostController: NavHostController = rememberNavControl
     )
 
     // Mini Player Button Layout (left paired / symmetric / right paired)
-    val miniPlayerButtonLayout by rememberAppearanceSettings().miniPlayerButtonLayoutFlow.collectAsState(
+    val miniPlayerButtonLayout by settings.miniPlayerButtonLayoutFlow.collectAsStateWithLifecycle(
         MiniPlayerButtonLayout.SYMMETRIC
     )
     val miniPlayerButtonLayoutLabels = mapOf(
@@ -141,7 +147,7 @@ fun S_AppearanceScreen(navHostController: NavHostController = rememberNavControl
                         Icon(
                             imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
                             tint = MaterialTheme.colorScheme.onBackground,
-                            contentDescription = "Previous Song",
+                            contentDescription = "Back",
                             modifier = Modifier
                                 .size(24.dp)
                         )
@@ -167,7 +173,7 @@ fun S_AppearanceScreen(navHostController: NavHostController = rememberNavControl
             ) {
                 Icon(
                     imageVector = ImageVector.vectorResource(R.drawable.s_a_palette),
-                    contentDescription = "Settings Icon",
+                    contentDescription = null,
                     tint = MaterialTheme.colorScheme.onBackground,
                     modifier = Modifier.size(48.dp)
                 )
@@ -208,7 +214,7 @@ fun S_AppearanceScreen(navHostController: NavHostController = rememberNavControl
                     modifier = Modifier.clip(RoundedCornerShape(16.dp))
                 ) {
                     //Username
-                    val username by rememberAppearanceSettings().usernameFlow.collectAsState("Username")
+                    val username by settings.usernameFlow.collectAsStateWithLifecycle("Username")
 
                     SettingsDialogButton(
                         stringResource(R.string.Setting_Username),
@@ -225,7 +231,7 @@ fun S_AppearanceScreen(navHostController: NavHostController = rememberNavControl
                     verticalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
                     //Theme
-                    val selectedTheme by rememberAppearanceSettings().appTheme.collectAsState(
+                    val selectedTheme by settings.appTheme.collectAsStateWithLifecycle(
                         AppTheme.SYSTEM.name
                     )
                     val themes = listOf(
@@ -248,7 +254,7 @@ fun S_AppearanceScreen(navHostController: NavHostController = rememberNavControl
                     )
 
                     //Background Style
-                    val backgroundType by rememberAppearanceSettings().npBackgroundFlow.collectAsState(
+                    val backgroundType by settings.npBackgroundFlow.collectAsStateWithLifecycle(
                         NowPlayingBackground.STATIC_BLUR
                     )
 
@@ -270,7 +276,7 @@ fun S_AppearanceScreen(navHostController: NavHostController = rememberNavControl
                     )
 
                     //Global cover-driven theme
-                    val coverThemeEnabled by rememberAppearanceSettings().coverThemeFlow.collectAsStateWithLifecycle(true)
+                    val coverThemeEnabled by settings.coverThemeFlow.collectAsStateWithLifecycle(true)
                     SettingsSwitch(
                         coverThemeEnabled,
                         "全局跟随封面配色",
@@ -284,7 +290,7 @@ fun S_AppearanceScreen(navHostController: NavHostController = rememberNavControl
 
                     //Disable Screen Standby
                     val disableScreenStandby =
-                        rememberAppearanceSettings().disableScreenStandby.collectAsState(true)
+                        settings.disableScreenStandby.collectAsStateWithLifecycle(true)
                     SettingsSwitch(
                         disableScreenStandby.value,
                         stringResource(R.string.Setting_Screen_Standby),
@@ -308,7 +314,7 @@ fun S_AppearanceScreen(navHostController: NavHostController = rememberNavControl
                         )
                     }
                     val enabledNavbarItems =
-                        rememberAppearanceSettings().bottomNavItemsFlow.collectAsState(
+                        settings.bottomNavItemsFlow.collectAsStateWithLifecycle(
                             emptyList()
                         ).value
                             .filter { it.enabled }
@@ -333,7 +339,7 @@ fun S_AppearanceScreen(navHostController: NavHostController = rememberNavControl
                         )
                     }
                     val enabledHomeItems =
-                        rememberAppearanceSettings().homeItemsItemsFlow.collectAsState(
+                        settings.homeItemsItemsFlow.collectAsStateWithLifecycle(
                             emptyList()
                         ).value
                             .filter { it.enabled }
@@ -385,7 +391,7 @@ fun S_AppearanceScreen(navHostController: NavHostController = rememberNavControl
                 ) {
 
                     // Page Transition Animation Option
-                    val pageTransitionStyle by rememberAppearanceSettings().pageTransitionStyleFlow.collectAsState(
+                    val pageTransitionStyle by settings.pageTransitionStyleFlow.collectAsStateWithLifecycle(
                         com.craftworks.music.managers.settings.PageTransitionStyle.ELEGANT_SPRING
                     )
                     val transitionStyleLabels = mapOf(
@@ -403,7 +409,7 @@ fun S_AppearanceScreen(navHostController: NavHostController = rememberNavControl
                         }
                     )
                     //Lyrics blur Info
-                    val nowPlayingLyricsBlur by rememberAppearanceSettings().nowPlayingLyricsBlurFlow.collectAsStateWithLifecycle(true)
+                    val nowPlayingLyricsBlur by settings.nowPlayingLyricsBlurFlow.collectAsStateWithLifecycle(true)
                     SettingsSwitch(
                         nowPlayingLyricsBlur,
                         stringResource(R.string.Setting_NowPlayingLyricsBlur),
@@ -416,7 +422,7 @@ fun S_AppearanceScreen(navHostController: NavHostController = rememberNavControl
                         enabled = Build.VERSION.SDK_INT > Build.VERSION_CODES.TIRAMISU
                     )
 
-                    val lyricsAutoScroll by rememberAppearanceSettings().lyricsAutoScroll.collectAsStateWithLifecycle(true)
+                    val lyricsAutoScroll by settings.lyricsAutoScroll.collectAsStateWithLifecycle(true)
                     SettingsSwitch(
                         lyricsAutoScroll,
                         stringResource(R.string.Setting_LyricsAutoscroll),
@@ -428,7 +434,7 @@ fun S_AppearanceScreen(navHostController: NavHostController = rememberNavControl
                         }
                     )
 
-                    val lyricsRecenterAfterScroll by rememberAppearanceSettings().lyricsRecenterAfterScroll.collectAsStateWithLifecycle(true)
+                    val lyricsRecenterAfterScroll by settings.lyricsRecenterAfterScroll.collectAsStateWithLifecycle(true)
                     SettingsSwitch(
                         lyricsRecenterAfterScroll,
                         stringResource(R.string.Setting_LyricsRecenter),
@@ -442,7 +448,7 @@ fun S_AppearanceScreen(navHostController: NavHostController = rememberNavControl
 
                     // Lyrics Animation Speed
                     val lyricsAnimationSpeed =
-                        rememberAppearanceSettings().lyricsAnimationSpeedFlow.collectAsState(
+                        settings.lyricsAnimationSpeedFlow.collectAsStateWithLifecycle(
                             1200
                         )
                     val interactionSource = remember { MutableInteractionSource() }
@@ -519,7 +525,7 @@ fun S_AppearanceScreen(navHostController: NavHostController = rememberNavControl
                 ) {
                     //More Song Info
                     val showMoreInfo =
-                        rememberAppearanceSettings().showMoreInfoFlow.collectAsState(true)
+                        settings.showMoreInfoFlow.collectAsStateWithLifecycle(true)
                     SettingsSwitch(
                         showMoreInfo.value,
                         stringResource(R.string.Setting_MoreInfo),
@@ -533,7 +539,7 @@ fun S_AppearanceScreen(navHostController: NavHostController = rememberNavControl
 
                     //Show Navidrome Logo
                     val showNavidromeLogo =
-                        rememberAppearanceSettings().showNavidromeLogoFlow.collectAsState(true)
+                        settings.showNavidromeLogoFlow.collectAsStateWithLifecycle(true)
                     SettingsSwitch(
                         showNavidromeLogo.value,
                         stringResource(R.string.Setting_NavidromeLogo),
@@ -547,7 +553,7 @@ fun S_AppearanceScreen(navHostController: NavHostController = rememberNavControl
 
                     //Show Provider Dividers
                     val showProviderDividers =
-                        rememberAppearanceSettings().showProviderDividersFlow.collectAsState(
+                        settings.showProviderDividersFlow.collectAsStateWithLifecycle(
                             true
                         )
                     SettingsSwitch(
@@ -563,7 +569,7 @@ fun S_AppearanceScreen(navHostController: NavHostController = rememberNavControl
 
                     //Refresh Ripple
                     val refreshRipple =
-                        rememberAppearanceSettings().refreshAnimationFlow.collectAsState(true)
+                        settings.refreshAnimationFlow.collectAsStateWithLifecycle(true)
                     SettingsSwitch(
                         refreshRipple.value,
                         stringResource(R.string.Setting_RefreshAnimation),
@@ -578,7 +584,7 @@ fun S_AppearanceScreen(navHostController: NavHostController = rememberNavControl
 
                     // Track numbers in album view
                     val showTrackNumbers =
-                        rememberAppearanceSettings().showTrackNumbersFlow.collectAsState(true)
+                        settings.showTrackNumbersFlow.collectAsStateWithLifecycle(true)
                     SettingsSwitch(
                         showTrackNumbers.value,
                         stringResource(R.string.Setting_TrackNumbersAlbum),
@@ -623,7 +629,7 @@ fun S_AppearanceScreen(navHostController: NavHostController = rememberNavControl
         if(showPageTransitionDialog)
             com.craftworks.music.ui.elements.dialogs.PageTransitionStyleDialog(
                 setShowDialog = { showPageTransitionDialog = it },
-                selection = rememberAppearanceSettings().pageTransitionStyleFlow.collectAsState(
+                selection = settings.pageTransitionStyleFlow.collectAsStateWithLifecycle(
                     com.craftworks.music.managers.settings.PageTransitionStyle.ELEGANT_SPRING
                 ).value,
                 onSet = { style ->

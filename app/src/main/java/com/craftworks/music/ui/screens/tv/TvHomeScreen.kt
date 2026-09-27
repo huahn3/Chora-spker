@@ -103,8 +103,8 @@ fun TvHomeScreen(
     val mostPlayedAlbums by viewModel.mostPlayedAlbums.collectAsStateWithLifecycle()
     val shuffledAlbums by viewModel.shuffledAlbums.collectAsStateWithLifecycle()
 
-    val orderedHomeItems = rememberAppearanceSettings().homeItemsItemsFlow.collectAsState(
-        initial = listOf(
+    val orderedHomeItems = rememberAppearanceSettings().homeItemsItemsFlow.collectAsStateWithLifecycle(
+        initialValue = listOf(
             HomeItem("recently_played", true),
             HomeItem("recently_added", true),
             HomeItem("most_played", true)

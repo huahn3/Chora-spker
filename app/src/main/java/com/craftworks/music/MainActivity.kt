@@ -124,6 +124,7 @@ import com.craftworks.music.managers.LocalProviderManager
 import com.craftworks.music.managers.NavidromeManager
 import com.craftworks.music.managers.settings.AppTheme
 import com.craftworks.music.managers.settings.AppearanceSettingsManager
+import com.craftworks.music.managers.settings.rememberAppearanceSettings
 import com.craftworks.music.player.ChoraMediaLibraryService
 import com.craftworks.music.player.rememberManagedMediaController
 import com.craftworks.music.ui.elements.dialogs.tv.OnboardingDialog
@@ -156,6 +157,8 @@ import java.util.Locale
 
 val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
 
+private const val TAG_SERVICE = "MainActivity"
+
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
     lateinit var navController: NavHostController
@@ -166,15 +169,27 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         val serviceIntent = Intent(applicationContext, ChoraMediaLibraryService::class.java)
-        this@MainActivity.startService(serviceIntent)
+        // Un-guarded startService() crashed the whole ACTIVITY with
+        // BackgroundServiceStartNotAllowedException whenever the process was
+        // launched while not in the foreground — tapping the media notification,
+        // a media-button retry, or any `am start` from a shell. The service
+        // start is refused and the exception propagates straight out of
+        // onCreate, so the app died before drawing a single frame.
+        // The refusal is recoverable (the controller reconnects on the next
+        // resume), so it must not be allowed to kill the activity.
+        try {
+            this@MainActivity.startService(serviceIntent)
+        } catch (e: Exception) {
+            Log.w(TAG_SERVICE, "Media service start refused: ${e.message}")
+        }
 
         enableEdgeToEdge()
 
         setContent {
             // Single shared instance for the whole tree — this block used to build
             // one manager for the theme and a second one for cover theming.
-            val appearanceSettings = remember { AppearanceSettingsManager(this) }
-            val selectedThemeName by appearanceSettings.appTheme.collectAsState(
+            val appearanceSettings = rememberAppearanceSettings()
+            val selectedThemeName by appearanceSettings.appTheme.collectAsStateWithLifecycle(
                 AppTheme.SYSTEM.name
             )
             val darkTheme = when (selectedThemeName) {
@@ -280,6 +295,15 @@ class MainActivity : ComponentActivity() {
                     val playerOffset = remember { Animatable(if (playerExpandedState) 1f else 0f) }
                     val isPlayerExpanded by remember {
                         derivedStateOf { playerOffset.value >= 0.5f }
+                    }
+                    // Separate, lower threshold. The full-screen player is only
+                    // ever translated off-screen (铁律 9), never unmounted, so the
+                    // background's 60 fps gradient shader and the lyrics tickers
+                    // kept running behind the home screen. Read through a
+                    // derivedStateOf so this flag flips once per transition
+                    // instead of recomposing on every drag frame.
+                    val isPlayerLive by remember {
+                        derivedStateOf { playerOffset.value > 0.001f }
                     }
                     LaunchedEffect(isPlayerExpanded) {
                         playerExpandedState = isPlayerExpanded
@@ -414,6 +438,9 @@ class MainActivity : ComponentActivity() {
                                     if (available.y > 0f && playerOffset.value > 0f) {
                                         val next = (playerOffset.value - available.y / overlayScreenHeightPx)
                                             .coerceIn(0f, 1f)
+                                        // NestedScrollConnection.onPostScroll is a
+                                        // plain (non-suspend) callback, so snapTo has
+                                        // to be launched here.
                                         coroutineScope.launch { playerOffset.snapTo(next) }
                                         return androidx.compose.ui.geometry.Offset(0f, available.y)
                                     }
@@ -496,23 +523,28 @@ class MainActivity : ComponentActivity() {
                                                     (dragAmount / dt * 1000f) * 0.4f
                                             val next = (playerOffset.value - dragAmount / overlayScreenHeightPx)
                                                 .coerceIn(0f, 1f)
+                                            // onVerticalDrag is not a suspend context,
+                                            // so snapTo has to be launched. (The
+                                            // onPostScroll twin below IS suspend and
+                                            // calls it directly.)
                                             coroutineScope.launch { playerOffset.snapTo(next) }
                                         }
                                     )
                                 }
                         ) {
-                            NowPlayingContent(
+                            if (isPlayerLive) NowPlayingContent(
                                 mediaController = mediaController,
                                 metadata = metadata,
                                 viewModel = nowPlayingViewModel,
                                 showInternalQueue = false,
-                                showJukeboxSheet = false
+                                showJukeboxSheet = false,
+                                active = isPlayerLive
                             )
                         }
 
                         val currentView = LocalView.current
                         val dockCtx = LocalContext.current
-                        val disableScreenStandy by remember(dockCtx) { AppearanceSettingsManager(dockCtx) }.disableScreenStandby.collectAsStateWithLifecycle(true)
+                        val disableScreenStandy by rememberAppearanceSettings().disableScreenStandby.collectAsStateWithLifecycle(true)
                         DisposableEffect(isPlayerExpanded) {
                             val fullscreenNow = isPlayerExpanded
                             if (fullscreenNow) {
@@ -667,8 +699,8 @@ fun TvSideNavigation(
     val (home, albums, songs, artists, radios, playlists, settings) = remember { FocusRequester.createRefs() }
     val currentRoute by navController.currentBackStackEntryFlow.collectAsStateWithLifecycle(initialValue = null)
 
-    val orderedNavItems = remember(context) { AppearanceSettingsManager(context) }.bottomNavItemsFlow.collectAsState(
-        initial = NavItems.default
+    val orderedNavItems = rememberAppearanceSettings().bottomNavItemsFlow.collectAsStateWithLifecycle(
+        initialValue = NavItems.default
     ).value
 
     NavigationDrawer(
@@ -880,8 +912,8 @@ fun AnimatedBottomNavBar(
     // remembered: AnimatedBottomNavBar takes paletteColors, so it recomposes on
     // every track change — recreating the manager (and its DataStore flow chain)
     // each time would re-subscribe the collector on every song.
-    val orderedNavItems = remember(context) { AppearanceSettingsManager(context) }.bottomNavItemsFlow.collectAsState(
-        initial = listOf(
+    val orderedNavItems = rememberAppearanceSettings().bottomNavItemsFlow.collectAsStateWithLifecycle(
+        initialValue = listOf(
             BottomNavItem(
                 "Home", R.drawable.rounded_home_24, "home_screen"
             ), BottomNavItem(

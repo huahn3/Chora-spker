@@ -106,7 +106,7 @@ fun RadioScreen(
                             Icon(
                                 imageVector = ImageVector.vectorResource(R.drawable.rounded_add_24),
                                 tint = MaterialTheme.colorScheme.onBackground,
-                                contentDescription = "Previous Song",
+                                contentDescription = "Back",
                                 modifier = Modifier
                                     .height(32.dp)
                                     .size(32.dp)

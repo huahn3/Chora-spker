@@ -76,3 +76,38 @@ fun Modifier.moveClick(right: Boolean, enabled: Boolean = true) = composed {
             }
         }
 }
+
+/**
+ * Press-slide for a button's *content*, without moving the touch target.
+ *
+ * [moveClick] is the same effect but built on `Modifier.offset`, which is a
+ * LAYOUT modifier: Compose hit-tests against the offset position, so the moment
+ * the button slid 12 dp on press, a finger resting near the trailing edge fell
+ * outside the shifted bounds and the click was silently cancelled. On the 48 dp
+ * transport keys that made the outer ~12 dp of prev/next dead.
+ *
+ * Applying this to the Icon instead keeps the press feel while the IconButton's
+ * bounds stay perfectly still — `graphicsLayer` does not participate in hit
+ * testing.
+ */
+fun Modifier.pressSlide(right: Boolean, enabled: Boolean = true) = composed {
+    var buttonState by remember { mutableStateOf(ButtonState.Idle) }
+    val position by animateDpAsState(
+        if (buttonState == ButtonState.Pressed && enabled) 10.dp else 0.dp,
+        label = "Press Slide",
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMedium
+        )
+    )
+    this
+        .graphicsLayer { translationX = if (right) position.toPx() else -position.toPx() }
+        .pointerInput(Unit) {
+            awaitEachGesture {
+                awaitFirstDown(requireUnconsumed = false)
+                buttonState = ButtonState.Pressed
+                waitForUpOrCancellation()
+                buttonState = ButtonState.Idle
+            }
+        }
+}

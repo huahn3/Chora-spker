@@ -80,7 +80,7 @@ fun LocalProviderCard(local: String = "", context: Context = LocalContext.curren
             )
             Text(
                 text = local,
-                color = MaterialTheme.colorScheme.onBackground.copy(0.75f),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.bodyMedium,
             )
         }
@@ -164,7 +164,7 @@ fun NavidromeProviderCard(
             )
             Text(
                 text = server.url,
-                color = MaterialTheme.colorScheme.onBackground.copy(0.75f),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.bodyMedium,
             )
         }
@@ -243,7 +243,7 @@ fun LRCLIBProviderCard(
             )
             Text(
                 text = "LRCLIB.net",
-                color = MaterialTheme.colorScheme.onBackground.copy(0.75f),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.bodyMedium,
             )
         }
@@ -317,7 +317,7 @@ fun NetEaseProviderCard(
             )
             Text(
                 text = "NetEase",
-                color = MaterialTheme.colorScheme.onBackground.copy(0.75f),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.bodyMedium,
             )
         }

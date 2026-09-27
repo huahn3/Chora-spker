@@ -63,7 +63,7 @@ fun SettingScreen(
                         Icon(
                             imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
                             tint = MaterialTheme.colorScheme.onBackground,
-                            contentDescription = "Previous Song",
+                            contentDescription = "Back",
                             modifier = Modifier
                                 .size(24.dp)
                         )

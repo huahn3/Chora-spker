@@ -58,7 +58,15 @@ fun NowPlayingContent(
     metadata: MediaMetadata? = null,
     viewModel: NowPlayingViewModel = viewModel(),
     showInternalQueue: Boolean = true,
-    showJukeboxSheet: Boolean = true
+    showJukeboxSheet: Boolean = true,
+    /**
+     * False while the player is collapsed into the dock. Stops the full-screen
+     * background shader and the lyrics tickers from running behind the scenes —
+     * this subtree is only ever translated off-screen, never unmounted, so
+     * without the flag every screen paid for a 60 fps gradient + 2 Hz lyric
+     * recomposition for the whole session.
+     */
+    active: Boolean = true
 ) {
     val backgroundStyle by viewModel.backgroundStyle.collectAsStateWithLifecycle(NowPlayingBackground.STATIC_BLUR)
     val backgroundDarkMode by viewModel.isBackgroundDark.collectAsStateWithLifecycle()
@@ -94,7 +102,7 @@ fun NowPlayingContent(
         else -> Color.Transparent
     }
 
-    NowPlaying_Background(colors, backgroundStyle, targetOverlayColor)
+    NowPlaying_Background(colors, backgroundStyle, targetOverlayColor, active = active)
 
     if (LocalConfiguration.current.uiMode and Configuration.UI_MODE_TYPE_MASK == Configuration.UI_MODE_TYPE_TELEVISION) {
         TvNowPlaying(
@@ -113,7 +121,8 @@ fun NowPlayingContent(
             onToggleQueue = { viewModel.setPlayQueueOpen(!playQueueOpen) },
             onToggleTranslation = { viewModel.toggleLyricsTranslation() },
             onForceRetranslate = { viewModel.forceRetranslateLyrics() },
-            onRefreshLyrics = { viewModel.refreshLyrics(metadata) }
+            onRefreshLyrics = { viewModel.refreshLyrics(metadata) },
+            active = active
         )
     } else {
         NowPlayingPortrait(
@@ -136,7 +145,8 @@ fun NowPlayingContent(
             onOpenJukebox = { viewModel.setJukeboxDialogOpen(true) },
             onToggleTranslation = { viewModel.toggleLyricsTranslation() },
             onForceRetranslate = { viewModel.forceRetranslateLyrics() },
-            onRefreshLyrics = { viewModel.refreshLyrics(metadata) }
+            onRefreshLyrics = { viewModel.refreshLyrics(metadata) },
+            active = active
         )
     }
 

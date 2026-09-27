@@ -46,7 +46,9 @@ fun PlaylistCard(playlist: MediaItem, onClick: () -> Unit) {
                 },
                 onLongClickLabel = "Delete Playlist"
             )
-            .widthIn(min = 128.dp),
+            // widthIn(min = 128.dp) removed: only ever hosted by
+            // PlaylistGrid (Adaptive(96.dp)), where it overflowed the cell.
+            .fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         SubcomposeAsyncImage(
@@ -57,12 +59,18 @@ fun PlaylistCard(playlist: MediaItem, onClick: () -> Unit) {
                         metadata.artworkUri
                 )
                 .crossfade(true)
+                // Both keys: diskCacheKey alone meant every recomposition
+                // re-decoded the bitmap from disk.
+                .memoryCacheKey(
+                    metadata.extras?.getString("navidromeID") ?: playlist.mediaId
+                )
                 .diskCacheKey(
                     metadata.extras?.getString("navidromeID") ?: playlist.mediaId
                 )
                 .build(),
             contentScale = ContentScale.FillWidth,
-            contentDescription = "Album Image",
+            // decorative: the title sits right next to this image
+            contentDescription = null,
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(1f)

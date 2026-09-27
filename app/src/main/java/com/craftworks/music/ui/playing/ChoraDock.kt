@@ -62,6 +62,7 @@ import com.craftworks.music.data.BottomNavItem
 import com.craftworks.music.data.NavItems
 import com.craftworks.music.data.model.Screen
 import com.craftworks.music.managers.settings.AppearanceSettingsManager
+import com.craftworks.music.managers.settings.rememberAppearanceSettings
 import kotlinx.coroutines.launch
 
 /**
@@ -227,6 +228,11 @@ fun ChoraDock(
                                         // Raw drag distance; the mini player damps
                                         // it and only moves the text block.
                                         val maxShift = with(density) { 140.dp.toPx() }
+                                        // Animatable.snapTo is suspend and
+                                        // onDrag is not a coroutine context, so the
+                                        // launch is required. dockScope is the
+                                        // composable's own scope, so it is cancelled
+                                        // with the dock rather than leaking.
                                         dockScope.launch {
                                             swipeX.snapTo(cumDx.coerceIn(-maxShift, maxShift))
                                         }
@@ -289,10 +295,10 @@ private fun DockNavRow(
     // Stable manager + stable flow instance: without remember() each recomposition
     // creates a new flow, restarting collection and briefly rendering an empty nav
     // row, which collapsed the dock height (the "dock disappears" symptom).
-    val settingsManager = remember(context) { AppearanceSettingsManager(context) }
+    val settingsManager = rememberAppearanceSettings()
     val defaultNavItems = remember { NavItems.default }
-    val orderedNavItems = settingsManager.bottomNavItemsFlow.collectAsState(
-        initial = defaultNavItems
+    val orderedNavItems = settingsManager.bottomNavItemsFlow.collectAsStateWithLifecycle(
+        initialValue = defaultNavItems
     ).value
 
     Row(
@@ -310,7 +316,7 @@ private fun DockNavRow(
 
             val tintColor by animateColorAsState(
                 targetValue = if (selected) MaterialTheme.colorScheme.primary
-                              else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
+                              else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
                 animationSpec = tween(200),
                 label = "dockNavTint"
             )

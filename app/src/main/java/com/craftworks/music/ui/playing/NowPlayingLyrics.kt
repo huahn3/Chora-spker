@@ -84,12 +84,14 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -98,6 +100,9 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextMotion
@@ -132,6 +137,13 @@ fun LyricsView(
     onToggleView: () -> Unit = {},
     onToggleTranslation: () -> Unit = {},
     onForceRetranslate: () -> Unit = {},
+    /**
+     * False while the full-screen player is collapsed into the dock. Suspends
+     * both tickers and drops the per-line `Modifier.blur`, so a parked player
+     * costs nothing. The lyrics themselves keep their state, so re-opening the
+     * player lands exactly where you left it.
+     */
+    active: Boolean = true,
 ) {
     val lyrics by LyricsState.lyrics.collectAsStateWithLifecycle()
     val loading by LyricsState.loading.collectAsStateWithLifecycle()
@@ -142,10 +154,10 @@ fun LyricsView(
     // hundred ms), restarting each collection and dropping back to `initial`.
     val appearanceSettingsManager = rememberAppearanceSettings()
 
-    val useBlur by appearanceSettingsManager.nowPlayingLyricsBlurFlow.collectAsState(
+    val useBlur by appearanceSettingsManager.nowPlayingLyricsBlurFlow.collectAsStateWithLifecycle(
         true
     )
-    val lyricsAnimationSpeed by appearanceSettingsManager.lyricsAnimationSpeedFlow.collectAsState(
+    val lyricsAnimationSpeed by appearanceSettingsManager.lyricsAnimationSpeedFlow.collectAsStateWithLifecycle(
         100
     )
     val lyricsAlignment by appearanceSettingsManager.nowPlayingLyricsAlignment.collectAsStateWithLifecycle(
@@ -167,9 +179,31 @@ fun LyricsView(
     val state = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     val visibleItemsInfo by remember { derivedStateOf { state.layoutInfo.visibleItemsInfo } }
+    // Single Boolean instead of handing the list to every item. The list is an
+    // unstable type AND a fresh instance on every measure pass, so passing it
+    // down re-executed every visible item's body on every scroll frame.
+    val currentLineOnScreen by remember {
+        derivedStateOf {
+            val idx = currentLyricIndex.intValue
+            idx >= 0 && visibleItemsInfo.any { it.index == idx }
+        }
+    }
 
     var scrollOffset = dpToPx(128)
     val interludeHeight = dpToPx(48)
+
+    // Which word of the CURRENT line is being sung. Computed once per tick here
+    // instead of once per visible line per word inside the item.
+    val activeWordIndex by remember(currentLyricIndex, lyrics) {
+        derivedStateOf {
+            val idx = currentLyricIndex.intValue
+            if (idx < 0 || idx >= lyrics.size) -1
+            else {
+                val pos = currentPosition
+                lyrics[idx].words?.indexOfFirst { pos >= it.startMs } ?: -1
+            }
+        }
+    }
 
     var userScrolled by remember { mutableStateOf(false) }
     val isDragged by state.interactionSource.collectIsDraggedAsState()
@@ -221,13 +255,23 @@ fun LyricsView(
     // onDispose. The previous version built a private CoroutineScope and called
     // addListener without removing it, leaking one listener + one endless
     // polling loop per lyrics change.
-    LaunchedEffect(mediaController, lyrics) {
+    val lyricTimestamps = remember(lyrics) { buildLyricTimestamps(lyrics) }
+
+    LaunchedEffect(mediaController, lyrics, active) {
         val controller = mediaController ?: return@LaunchedEffect
+        // Not `while (isActive)` alone: a paused song makes
+        // getNextUpdateDelay() return the gap to the next word (100-500 ms), so
+        // the loop used to spin at 2-10 Hz forever, recomposing every visible
+        // lyric line for a position that could not change.
         while (isActive) {
+            if (!active) {
+                delay(1000L)
+                continue
+            }
             if (controller.isPlaying) {
                 currentPosition = controller.currentPosition.toInt()
             }
-            delay(getNextUpdateDelay(currentPosition, lyrics).milliseconds)
+            delay(getNextUpdateDelay(currentPosition, lyricTimestamps))
         }
     }
 
@@ -245,11 +289,22 @@ fun LyricsView(
     }
 
     // Lyric index updates and scrolling
-    LaunchedEffect(currentPosition, lyrics) {
-        //if (mediaController?.isPlaying == true) {
-        val newCurrentLyricIndex =
-            lyrics.indexOfFirst { it.startMs > (currentPosition) }
-                .takeIf { it >= 0 } ?: lyrics.size
+    // Keyed on `lyrics` only. Keying it on currentPosition cancelled and
+    // relaunched this coroutine on every tick, and each relaunch did a linear
+    // scan over the whole list; the list is already sorted by startMs, so this
+    // is a binary search over the state instead.
+    LaunchedEffect(lyrics) {
+        // snapshotFlow, not a `currentPosition` key: keying on the position
+        // cancelled and relaunched this coroutine on every tick. The list is
+        // already sorted by startMs, so each position is a binary search.
+        snapshotFlow { currentPosition }.collect { pos ->
+        var lo = 0
+        var hi = lyrics.size
+        while (lo < hi) {
+            val mid = (lo + hi) ushr 1
+            if (lyrics[mid].startMs <= pos) lo = mid + 1 else hi = mid
+        }
+        val newCurrentLyricIndex = if (lo < lyrics.size) lo else lyrics.size
 
         val targetIndex = (newCurrentLyricIndex - 1).coerceAtLeast(-1)
 
@@ -279,18 +334,22 @@ fun LyricsView(
                 }
             }
         }
-        //}
+        }
     }
 
     // Plain lyrics scrolling
     var plainLyricsViewportHeightPx by remember { mutableFloatStateOf(0f) }
     var plainLyricsItemHeightPx by remember { mutableFloatStateOf(0f) }
 
-    LaunchedEffect(mediaController, lyrics, plainLyricsItemHeightPx, plainLyricsViewportHeightPx) {
+    LaunchedEffect(mediaController, lyrics, plainLyricsItemHeightPx, plainLyricsViewportHeightPx, active) {
         if (lyrics.size == 1 && lyricsAutoscroll) {
             val updateIntervalMs = 500L
 
             while (isActive) {
+                if (!active) {
+                    delay(1000L)
+                    continue
+                }
                 if (mediaController?.isPlaying == true) {
                     val totalDuration = mediaController.duration
                     val position = mediaController.currentPosition
@@ -404,16 +463,22 @@ fun LyricsView(
                         if (lyrics.size > 1) {
                             itemsIndexed(
                                 lyrics,
-                                key = { index, lyric -> "${index}:${lyric.text}" }
+                                // startMs only: the old key was
+                                // "${index}:${lyric.text}", which allocated a
+                                // String per item per rebuild AND, because it
+                                // carried `index`, discarded every visible item
+                                // whenever a translation toggle changed the list
+                                // length (dropped lines -> all keys shift).
+                                key = { _, lyric -> lyric.startMs }
                             ) { index, lyric ->
                                 if (!lyric.words.isNullOrEmpty()) {
                                     WordSyncedLyricItem(
                                         lyric = lyric,
                                         index = index,
                                         currentLyricIndex = currentLyricIndex.intValue,
-                                        currentPosition = currentPosition,
-                                        useBlur = useBlur,
-                                        visibleItemsInfo = visibleItemsInfo,
+                                        activeWordIndex = activeWordIndex,
+                                        useBlur = useBlur && active,
+                                        currentLineOnScreen = currentLineOnScreen,
                                         color = color,
                                         lyricsAnimationSpeed = lyricsAnimationSpeed,
                                         onClick = {
@@ -429,8 +494,8 @@ fun LyricsView(
                                         lyric = lyric,
                                         index = index,
                                         currentLyricIndex = currentLyricIndex.intValue,
-                                        useBlur = useBlur,
-                                        visibleItemsInfo = visibleItemsInfo,
+                                        useBlur = useBlur && active,
+                                        currentLineOnScreen = currentLineOnScreen,
                                         color = color,
                                         lyricsAnimationSpeed = lyricsAnimationSpeed,
                                         onClick = {
@@ -552,6 +617,9 @@ fun LyricsView(
                 }
 
                 // Dedicated Safe Touch Zones (Left & Right margins for tap to flip and smooth swiping)
+                // Was a 112 dp-wide dead zone: clickable with `indication = null`
+                // and no semantics, so TalkBack skipped it entirely while it
+                // still swallowed taps on the outermost 56 dp of every line.
                 Box(
                     modifier = Modifier
                         .align(Alignment.CenterStart)
@@ -559,10 +627,11 @@ fun LyricsView(
                         .width(56.dp)
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
-                            indication = null
-                        ) {
-                            onToggleView()
-                        }
+                            indication = null,
+                            role = Role.Button,
+                            onClickLabel = "Toggle lyrics and cover"
+                        ) { onToggleView() }
+                        .semantics { contentDescription = "Toggle lyrics and cover" }
                 )
 
                 Box(
@@ -572,10 +641,11 @@ fun LyricsView(
                         .width(56.dp)
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
-                            indication = null
-                        ) {
-                            onToggleView()
-                        }
+                            indication = null,
+                            role = Role.Button,
+                            onClickLabel = "Toggle lyrics and cover"
+                        ) { onToggleView() }
+                        .semantics { contentDescription = "Toggle lyrics and cover" }
                 )
 
                 // NetEase Cloud Music-style center seek line & play button
@@ -700,19 +770,16 @@ fun WordSyncedLyricItem(
     lyric: Lyric,
     index: Int,
     currentLyricIndex: Int,
-    currentPosition: Int,
+    activeWordIndex: Int,
     useBlur: Boolean,
-    visibleItemsInfo: List<LazyListItemInfo>,
+    currentLineOnScreen: Boolean,
     color: Color,
     lyricsAnimationSpeed: Int = 1200,
     onClick: () -> Unit = {},
     onLongClick: () -> Unit = {},
 ) {
-    val context = LocalContext.current
     val lyricBlur: Dp by animateDpAsState(
-        targetValue = if (useBlur) calculateLyricBlur(
-            index, currentLyricIndex, visibleItemsInfo
-        ) else 0.dp,
+        targetValue = if (useBlur) calculateLyricBlur(index, currentLyricIndex, currentLineOnScreen) else 0.dp,
         label = "Lyric Blur",
         animationSpec = tween(lyricsAnimationSpeed, 0, FastOutSlowInEasing)
     )
@@ -764,7 +831,6 @@ fun WordSyncedLyricItem(
                         onLongClick = onLongClick
                     )
                         .padding(horizontal = 8.dp, vertical = 4.dp)
-                        .focusable(false)
                         .graphicsLayer {
                             scaleX = scale
                             scaleY = scale
@@ -777,10 +843,16 @@ fun WordSyncedLyricItem(
                         modifier = Modifier.wrapContentWidth(),
                         horizontalArrangement = Arrangement.Center
                     ) {
-                        lyric.words?.forEachIndexed { i, word ->
-                            val nextWordStart = lyric.words.getOrNull(i + 1)?.startMs ?: lyric.endMs!!
-                            val duration = word.endMs?.let { it - word.startMs } ?: (nextWordStart - word.startMs)
-                            val isThisWordActive = currentPosition >= word.startMs && currentPosition < lyric.endMs!!
+                        val words = lyric.words
+                        words?.forEachIndexed { i, word ->
+                            val nextWordStart = words.getOrNull(i + 1)?.startMs
+                                ?: (lyric.endMs ?: word.endMs ?: word.startMs)
+                            val duration = word.endMs?.let { it - word.startMs }
+                                ?: (nextWordStart - word.startMs)
+                            // Precomputed in the parent: only the CURRENT line's
+                            // word can be active, so no other line needs to look
+                            // at the position at all.
+                            val isThisWordActive = i == activeWordIndex
 
                             AnimatedWord(
                                 wordText = word.text,
@@ -803,7 +875,7 @@ fun AnimatedWord(
     durationMillis: Int,
     color: Color
 ) {
-    val inactiveColor = color.copy(alpha = 0.4f)
+    val inactiveColor = color.copy(alpha = 0.55f)
     val wipeProgress = remember { Animatable(0f) }
     val textAlpha = remember { Animatable(1f) }
 
@@ -828,18 +900,27 @@ fun AnimatedWord(
         }
     }
 
-    val brush = if (isActive && wipeProgress.isRunning) {
-        val currentOffset = wipeProgress.value * (1f + 0.3f)
-        val activeEnd = (currentOffset - 0.3f).coerceIn(0f, 1f)
-        val inactiveStart = currentOffset.coerceIn(0f, 1f)
-        Brush.horizontalGradient(
-            0f to color,
-            activeEnd to color,
-            inactiveStart to inactiveColor,
-            1f to inactiveColor
-        )
-    } else {
-        SolidColor(color)
+    // The wipe brush is a pure function of (wipeProgress, isActive, color).
+    // Reading wipeProgress.value in the body meant a new Brush on every frame of
+    // the 2-10 Hz lyric tick for each of ~20 visible words, and it also forced
+    // this composable to recompose on every tick. Reading the State in a
+    // `derivedStateOf` keeps the brush cached while still tracking the value.
+    val brush by remember(isActive, color, inactiveColor) {
+        derivedStateOf {
+            if (isActive && wipeProgress.isRunning) {
+                val currentOffset = wipeProgress.value * (1f + 0.3f)
+                val activeEnd = (currentOffset - 0.3f).coerceIn(0f, 1f)
+                val inactiveStart = currentOffset.coerceIn(0f, 1f)
+                Brush.horizontalGradient(
+                    0f to color,
+                    activeEnd to color,
+                    inactiveStart to inactiveColor,
+                    1f to inactiveColor
+                )
+            } else {
+                SolidColor(color)
+            }
+        }
     }
 
     val yOffset = remember { Animatable(0f) }
@@ -862,17 +943,22 @@ fun AnimatedWord(
             .graphicsLayer {
                 translationY = yOffset.value
                 alpha = textAlpha.value
-                compositingStrategy = CompositingStrategy.Offscreen
+                // Only the active word needs an offscreen buffer, for the
+                // BlendMode.SrcIn wipe. Applying it unconditionally meant one
+                // FBO per visible word (60-120 on a CJK track).
+                compositingStrategy =
+                    if (isActive) CompositingStrategy.Offscreen
+                    else CompositingStrategy.Auto
             }
-            .drawWithCache {
-                onDrawWithContent {
-                    drawContent()
-                    drawRect(
-                        brush = brush,
-                        blendMode = BlendMode.SrcIn
-                    )
+            // drawWithContent, not drawWithCache: nothing was prepared in a
+            // cache block, and `brush` changes per frame, so the cache bought
+            // nothing while forcing the Brush derivation onto the render thread.
+            .drawWithContent {
+                drawContent()
+                if (isActive) {
+                    drawRect(brush = brush, blendMode = BlendMode.SrcIn)
                 }
-            },
+            }
     )
 }
 
@@ -883,7 +969,7 @@ fun SyncedLyricItem(
     index: Int,
     currentLyricIndex: Int,
     useBlur: Boolean,
-    visibleItemsInfo: List<LazyListItemInfo>,
+    currentLineOnScreen: Boolean,
     color: Color,
     lyricsAnimationSpeed: Int = 1200,
     onClick: () -> Unit = {},
@@ -897,9 +983,7 @@ fun SyncedLyricItem(
     )
 
     val lyricBlur: Dp by animateDpAsState(
-        targetValue = if (useBlur) calculateLyricBlur(
-            index, currentLyricIndex, visibleItemsInfo
-        ) else 0.dp,
+        targetValue = if (useBlur) calculateLyricBlur(index, currentLyricIndex, currentLineOnScreen) else 0.dp,
         label = "Lyric Blur",
         animationSpec = tween(lyricsAnimationSpeed / 2, 0, FastOutSlowInEasing)
     )
@@ -951,7 +1035,6 @@ fun SyncedLyricItem(
                         onLongClick = onLongClick
                     )
                     .padding(horizontal = 8.dp, vertical = 4.dp)
-                    .focusable(false)
                     .graphicsLayer {
                         scaleX = scale
                         scaleY = scale
@@ -966,7 +1049,7 @@ fun SyncedLyricItem(
                         style = if (i == 0) MaterialTheme.typography.titleLarge
                         else MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.SemiBold,
-                        color = color.copy(alpha = if (i == 0) lyricAlpha else lyricAlpha * 0.65f),
+                        color = color.copy(alpha = if (i == 0) lyricAlpha else lyricAlpha * 0.85f),
                         textAlign = TextAlign.Center
                     )
                 }
@@ -1026,36 +1109,52 @@ fun Dot(color: Color, phase: Float, index: Int) {
 private fun calculateLyricBlur(
     index: Int,
     currentLyricIndex: Int,
-    visibleItemsInfo: List<LazyListItemInfo>
+    currentLineOnScreen: Boolean
 ): Dp {
     return when {
-        index == currentLyricIndex || !visibleItemsInfo.any { it.index == currentLyricIndex } -> 0.dp
+        index == currentLyricIndex || !currentLineOnScreen -> 0.dp
         else -> minOf(abs(currentLyricIndex - index).toFloat(), 8f).dp
     }
 }
 
 // Calculate next update delay based on lyrics timestamps
-private fun getNextUpdateDelay(currentTime: Int, lyrics: List<Lyric>): Long {
-    // 1. Gather all future timestamps (both starts and ends) into a single sequence
-    val nextTimestamp = lyrics.asSequence()
-        .flatMap { lyric ->
-            // Build a list of valid timestamps for each lyric item
-            val timestamps = mutableListOf(lyric.startMs)
-            lyric.endMs?.let { timestamps.add(it) }
-            lyric.words?.forEach { word ->
-                timestamps.add(word.startMs)
-                word.endMs?.let { timestamps.add(it) }
-            }
-            timestamps
+private fun getNextUpdateDelay(currentTime: Int, timestamps: IntArray): Long {
+    // timestamps is pre-sorted (see lyricTimestamps). Binary search for the
+    // first entry strictly in the future. The previous version rebuilt the
+    // whole timestamp set on EVERY tick — one ArrayList per lyric line plus a
+    // boxed Int per word, 2-10 times a second.
+    var lo = 0
+    var hi = timestamps.size - 1
+    var result = -1
+    while (lo <= hi) {
+        val mid = (lo + hi) ushr 1
+        if (timestamps[mid] > currentTime) {
+            result = mid
+            hi = mid - 1
+        } else {
+            lo = mid + 1
         }
-        // 2. Filter for events that happen strictly in the future
-        .filter { it > currentTime }
-        // 3. Find the nearest upcoming event
-        .minOrNull()
-        ?: return 1000L // Fallback if we reached the very end of the song
+    }
+    if (result < 0) return 500L
+    return (timestamps[result] - currentTime).toLong().coerceIn(40L, 500L)
+}
 
-    // 4. Return the precise time remaining until that next event
-    return (nextTimestamp - currentTime).toLong()
+/** All lyric/word start+end timestamps, ascending. Built once per lyrics set. */
+private fun buildLyricTimestamps(lyrics: List<Lyric>): IntArray {
+    var n = lyrics.size
+    lyrics.forEach { l -> n += 1 + (l.words?.size ?: 0) * 2 }
+    val out = IntArray(n)
+    var i = 0
+    lyrics.forEach { l ->
+        out[i++] = l.startMs
+        l.endMs?.let { out[i++] = it }
+        l.words?.forEach { w ->
+            out[i++] = w.startMs
+            w.endMs?.let { out[i++] = it }
+        }
+    }
+    out.sort()
+    return out
 }
 
 private fun formatLyricTime(millis: Int): String {

@@ -21,14 +21,25 @@ enum class NowPlayingBackground {
 fun NowPlaying_Background(
     colorPalette: List<Color> = emptyList(),
     backgroundStyle: NowPlayingBackground = NowPlayingBackground.STATIC_BLUR,
-    overlayColor: Color = Color.Transparent
+    overlayColor: Color = Color.Transparent,
+    /**
+     * False while the full-screen player is parked off-screen behind the dock.
+     * The player overlay is translated away with `graphicsLayer` but never
+     * unmounted, so without this gate `AnimatedGradientBackground` kept its
+     * `while (true) { withFrameMillis { … } }` loop running at display refresh
+     * rate on EVERY screen. Collapsed, we degrade to a flat fill — invisible
+     * anyway, and it costs nothing.
+     */
+    active: Boolean = true
 ) {
-    if (colorPalette.isEmpty()) {
+    val effectiveStyle = if (active) backgroundStyle else NowPlayingBackground.PLAIN
+
+    if (colorPalette.isEmpty() || !active) {
         PlainBackground()
         return
     }
 
-    when (backgroundStyle){
+    when (effectiveStyle){
         NowPlayingBackground.PLAIN         -> PlainBackground()
         NowPlayingBackground.STATIC_BLUR   -> StaticBlurBackground(
             colors = colorPalette,

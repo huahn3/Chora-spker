@@ -2,6 +2,7 @@ package com.craftworks.music.ui.elements.dialogs.tv
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.platform.LocalContext
@@ -15,9 +16,9 @@ fun TranscodingBitrateDialog(setShowDialog: (Boolean) -> Unit, isWifiDialog: Boo
     val manager = rememberPlaybackSettings()
 
     val currentBitrate by if (isWifiDialog)
-        manager.wifiTranscodingBitrateFlow.collectAsState("")
+        manager.wifiTranscodingBitrateFlow.collectAsStateWithLifecycle("")
     else
-        manager.mobileDataTranscodingBitrateFlow.collectAsState("")
+        manager.mobileDataTranscodingBitrateFlow.collectAsStateWithLifecycle("")
 
     val list = listOf("1", "96", "128", "192", "256", "320", "No Transcoding")
 
@@ -42,7 +43,7 @@ fun TranscodingBitrateDialog(setShowDialog: (Boolean) -> Unit, isWifiDialog: Boo
 fun TranscodingFormatDialog(setShowDialog: (Boolean) -> Unit) {
     val scope = rememberCoroutineScope()
     val manager = rememberPlaybackSettings()
-    val currentFormat by manager.transcodingFormatFlow.collectAsState("")
+    val currentFormat by manager.transcodingFormatFlow.collectAsStateWithLifecycle("")
 
     GenericListDialog(
         setShowDialog = setShowDialog,

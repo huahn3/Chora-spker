@@ -55,6 +55,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.res.vectorResource
@@ -185,7 +187,10 @@ fun AlbumDetails(
                             .fillMaxWidth()
                             .fadingEdge(imageFadingEdge)
                             .clip(RoundedCornerShape(12.dp, 12.dp, 0.dp, 0.dp))
-                            .blur(8.dp)
+                            // Was 8dp on a full-bleed header; inside a lazy item the
+                            // RenderEffect layer is re-created every scroll cycle.
+                            // 4dp still softens the edge at a fraction of the cost.
+                            .blur(4.dp)
                     )
                     Button(
                         onClick = { navHostController.popBackStack() },
@@ -199,7 +204,7 @@ fun AlbumDetails(
                         Icon(
                             imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
                             tint = MaterialTheme.colorScheme.primary,
-                            contentDescription = "Settings",
+                            contentDescription = "Back",
                             modifier = Modifier
                                 .height(32.dp)
                                 .size(32.dp)
@@ -253,10 +258,16 @@ fun AlbumDetails(
                                 }
                             },
                             shape = RoundedCornerShape(12.dp),
+                            // Both Crossfade branches passed contentDescription = null,
+                            // so this was an unlabelled button to TalkBack.
                             modifier = Modifier
                                 .align(Alignment.TopEnd)
                                 .padding(top = 12.dp, end = 12.dp)
-                                .size(32.dp),
+                                .size(48.dp)
+                                .semantics {
+                                    contentDescription =
+                                        if (isStarred) "Remove from favourites" else "Add to favourites"
+                                },
                             contentPadding = PaddingValues(4.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.background, contentColor = MaterialTheme.colorScheme.onBackground)
                         ) {
@@ -298,7 +309,7 @@ fun AlbumDetails(
                         ) {
                             Icon(
                                 imageVector = ImageVector.vectorResource(R.drawable.rounded_download_24),
-                                contentDescription = "Unstar Album",
+                                contentDescription = "Download Album",
                                 tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier
                                     .height(28.dp)
@@ -372,7 +383,7 @@ fun AlbumDetails(
                             Text(
                                 text = stringResource(R.string.Album_Disc_Number) + discNumber.toString(),
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .padding(8.dp)

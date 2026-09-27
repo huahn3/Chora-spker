@@ -114,16 +114,21 @@ class LyricsRepository @Inject constructor(
                             // translation to the current lyrics.
                             if (LyricsState.currentSongId != navidromeID) return@launch
                             if (cached != null && !cached.lines.isNullOrEmpty()) {
-                                val mapped = cached.lines.map { line ->
-                                    Lyric(
-                                        startMs = line.start,
-                                        endMs = line.end,
-                                        text = if (line.translation.isNotBlank()) listOf(line.original, line.translation) else listOf(line.original)
-                                    )
+                                val result = mapTranslatedLines(cached.lines)
+                                val mapped = result.lyrics
+                                if (result.allUnchanged) {
+                                    // Cached, but the engine returned the original
+                                    // text for every line. Offering a "toggle" here
+                                    // would only swap between two identical
+                                    // renderings.
+                                    LyricsState.translatedLyrics = null
+                                    LyricsState.hasTranslation.value = false
+                                    Log.d("LYRICS_TRANSLATE", "Cached translation for $navidromeID is a no-op (${mapped.size} lines unchanged)")
+                                } else {
+                                    LyricsState.translatedLyrics = mapped
+                                    LyricsState.hasTranslation.value = true
+                                    Log.d("LYRICS_TRANSLATE", "Found cached translation for $navidromeID (${mapped.size} lines)")
                                 }
-                                LyricsState.translatedLyrics = mapped
-                                LyricsState.hasTranslation.value = true
-                                Log.d("LYRICS_TRANSLATE", "Found cached translation for $navidromeID (${mapped.size} lines)")
                             }
                         } catch (e: Exception) {
                             Log.w("LYRICS_TRANSLATE", "Cached translation probe failed: ${e.message}")
@@ -239,6 +244,42 @@ class LyricsRepository @Inject constructor(
         }
     }
 
+
+    /**
+     * Maps the fork's `lines[]` into app lyrics, applying the same de-dup guard
+     * the server applies to `bilingualLrc` / `inlineLrc`: when the engine hands
+     * back a translation identical to the original (very common — an already
+     * Chinese lyric set comes back from Gemini unchanged, 83/83 lines on a real
+     * song), `listOf(original, translation)` renders the SAME text twice and the
+     * 译 button looks like it does nothing.
+     *
+     * [allUnchanged] is true when *every* line came back identical, i.e. the
+     * server had nothing to translate. Callers must not flip into a "translated"
+     * state in that case, or the user swaps between two identical renderings.
+     */
+    private data class MappedLyrics(val lyrics: List<Lyric>, val allUnchanged: Boolean)
+
+    private fun mapTranslatedLines(
+        lines: List<com.craftworks.music.data.model.TranslatedLyricLine>
+    ): MappedLyrics {
+        var unchanged = 0
+        val mapped = lines.map { line ->
+            val orig = line.original
+            val trans = line.translation
+            if (trans.isNotBlank() && trans.trim() != orig.trim()) {
+                Lyric(
+                    startMs = line.start,
+                    endMs = line.end,
+                    text = listOf(orig, trans)
+                )
+            } else {
+                unchanged++
+                Lyric(startMs = line.start, endMs = line.end, text = listOf(orig))
+            }
+        }
+        return MappedLyrics(mapped, lines.isNotEmpty() && unchanged == lines.size)
+    }
+
     suspend fun toggleTranslation(context: Context) {
         val songId = LyricsState.currentSongId
         if (LyricsState.isTranslating.value) return
@@ -268,19 +309,25 @@ class LyricsRepository @Inject constructor(
             // overwrite the new song's lyrics.
             if (LyricsState.currentSongId != songId) return
             if (response != null && !response.lines.isNullOrEmpty()) {
-                val mapped = response.lines.map { line ->
-                    Lyric(
-                        startMs = line.start,
-                        endMs = line.end,
-                        text = if (line.translation.isNotBlank()) listOf(line.original, line.translation) else listOf(line.original)
-                    )
+                val result = mapTranslatedLines(response.lines)
+                val mapped = result.lyrics
+                if (result.allUnchanged) {
+                    LyricsState.translatedLyrics = null
+                    LyricsState.hasTranslation.value = false
+                    LyricsState.isTranslationEnabled.value = false
+                    Log.d("LYRICS_TRANSLATE", "Translation returned the original for all ${mapped.size} lines; nothing to switch")
+                } else {
+                    LyricsState.translatedLyrics = mapped
+                    LyricsState.hasTranslation.value = true
+                    LyricsState.isTranslationEnabled.value = true
+                    LyricsState.lyrics.value = mapped
                 }
-                LyricsState.translatedLyrics = mapped
-                LyricsState.hasTranslation.value = true
-                LyricsState.isTranslationEnabled.value = true
-                LyricsState.lyrics.value = mapped
                 withContext(Dispatchers.Main) {
-                    Toast.makeText(context, "歌词翻译已完成", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(
+                        context,
+                        if (result.allUnchanged) "这首歌的歌词已经是中文，无需翻译" else "歌词翻译已完成",
+                        Toast.LENGTH_SHORT
+                    ).show()
                 }
             } else {
                 withContext(Dispatchers.Main) {
@@ -316,19 +363,24 @@ class LyricsRepository @Inject constructor(
             val response = navidromeNativeApi.translateLyrics(songId, force = true)
             if (LyricsState.currentSongId != songId) return
             if (response != null && !response.lines.isNullOrEmpty()) {
-                val mapped = response.lines.map { line ->
-                    Lyric(
-                        startMs = line.start,
-                        endMs = line.end,
-                        text = if (line.translation.isNotBlank()) listOf(line.original, line.translation) else listOf(line.original)
-                    )
+                val result = mapTranslatedLines(response.lines)
+                val mapped = result.lyrics
+                if (result.allUnchanged) {
+                    LyricsState.translatedLyrics = null
+                    LyricsState.hasTranslation.value = false
+                    LyricsState.isTranslationEnabled.value = false
+                } else {
+                    LyricsState.translatedLyrics = mapped
+                    LyricsState.hasTranslation.value = true
+                    LyricsState.isTranslationEnabled.value = true
+                    LyricsState.lyrics.value = mapped
                 }
-                LyricsState.translatedLyrics = mapped
-                LyricsState.hasTranslation.value = true
-                LyricsState.isTranslationEnabled.value = true
-                LyricsState.lyrics.value = mapped
                 withContext(Dispatchers.Main) {
-                    Toast.makeText(context, "重新翻译完成", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(
+                        context,
+                        if (result.allUnchanged) "重新翻译结果与原文一致，这首歌的歌词已经是中文" else "重新翻译完成",
+                        Toast.LENGTH_SHORT
+                    ).show()
                 }
             } else {
                 withContext(Dispatchers.Main) {

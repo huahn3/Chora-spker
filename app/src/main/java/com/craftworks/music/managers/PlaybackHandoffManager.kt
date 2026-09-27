@@ -8,6 +8,8 @@ import android.widget.Toast
 import com.craftworks.music.data.datasource.navidrome.NavidromeDataSource
 import com.craftworks.music.data.datasource.navidrome.NavidromeDataSource.Companion.getOrCreateClientUniqueId
 import com.craftworks.music.data.datasource.navidrome.NavidromeNativeApi
+import com.craftworks.music.data.datasource.navidrome.TakeoverOutcome
+import com.craftworks.music.data.datasource.navidrome.canTakeOverSessionOnServer
 import com.craftworks.music.player.ChoraMediaLibraryService
 import com.craftworks.music.data.model.PlaybackSessionDto
 import com.craftworks.music.data.model.PlaybackSessionsResponse
@@ -30,6 +32,11 @@ import kotlinx.coroutines.launch
 object PlaybackHandoffManager {
     private const val AMBIENT_POLL_INTERVAL_MS = 10_000L
     private const val AMBIENT_POLL_BACKOFF_MS = 60_000L
+    private const val STARTUP_POLL_DELAY_MS = 3_000L
+    private const val SIGNAL_DEBOUNCE_MS = 1_500L
+    @Volatile private var nowPlayingSignalSeen = false
+    @Volatile private var lastSignalRefreshAt = 0L
+    private var signalRefreshJob: kotlinx.coroutines.Job? = null
 
     private val nativeApi = NavidromeNativeApi()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -161,6 +168,9 @@ object PlaybackHandoffManager {
     fun startAmbientPolling(intervalMs: Long = AMBIENT_POLL_INTERVAL_MS) {
         if (ambientPollJob?.isActive == true) return
         ambientPollJob = scope.launch {
+            // Started from Application.onCreate, so without this the first poll
+            // races the first frame and the app's own startup I/O.
+            delay(STARTUP_POLL_DELAY_MS)
             while (isActive) {
                 // No server configured yet is not an error, just idle.
                 if (NavidromeManager.checkActiveServers()) {
@@ -172,7 +182,12 @@ object PlaybackHandoffManager {
                         Log.w("HANDOFF", "ambient poll failed: ${e.message}")
                     }
                 }
-                delay(if (lastRefreshOk) intervalMs else AMBIENT_POLL_BACKOFF_MS)
+                // Once the server has proven it emits `nowPlayingCount`, the SSE
+                // fast path covers remote starts, so the poll can back off to a
+                // slow safety net. If EnableNowPlaying is off the signal never
+                // arrives and we simply stay on the short interval.
+                val effective = if (nowPlayingSignalSeen) intervalMs * 3 else intervalMs
+                delay(if (lastRefreshOk) effective else AMBIENT_POLL_BACKOFF_MS)
             }
         }
     }
@@ -190,6 +205,21 @@ object PlaybackHandoffManager {
         onDone: ((Boolean, String) -> Unit)? = null
     ) {
         if (_takeoverInFlight.value == session.sessionId) return
+
+        // The fork refuses a cross-user takeover for non-admins
+        // (canTakeOverSession: caller.IsAdmin || target.UserId == caller.ID) and
+        // answers 403. Detect that up front: proceeding would switch the local
+        // track, claim success, and leave the other device still playing.
+        val identity = NavidromeManager.getCurrentServer()?.let { nativeApi.loginIdentity(it) }
+        if (!canTakeOverSessionOnServer(identity, session.userId)) {
+            val who = session.username?.takeIf { it.isNotBlank() } ?: "其他用户"
+            val msg = "无法接管 $who 的播放：服务端只允许管理员跨用户接管"
+            mainHandler.post { Toast.makeText(context, msg, Toast.LENGTH_LONG).show() }
+            onDone?.invoke(false, msg)
+            Log.w("HANDOFF", "takeover refused locally: $who (userId=${session.userId})")
+            return
+        }
+
         _takeoverInFlight.value = session.sessionId
         scope.launch {
             var ok = false
@@ -243,12 +273,33 @@ object PlaybackHandoffManager {
                 msg = "已从 %02d:%02d 接管播放: %s".format(posSec / 60, posSec % 60, session.title)
                 val m3 = msg
                 mainHandler.post { android.widget.Toast.makeText(context, m3, android.widget.Toast.LENGTH_SHORT).show() }
-                _sessions.value = _sessions.value.filterNot { it.sessionId == session.sessionId }
-                _latestOtherSession.value = _sessions.value.pickLatestOther()
-                try {
-                    nativeApi.takeoverSession(session.sessionId, "pause", "Chora (手机端)", if (isRemoteOutput) targetOutput else "browser")
+                // Local playback already started (iron rule: local first, POST
+                // after) so a failed POST must not leave the UI lying about it.
+                val outcome = try {
+                    nativeApi.takeoverSession(
+                        session.sessionId,
+                        "pause",
+                        "Chora (手机端)",
+                        if (isRemoteOutput) targetOutput else "browser"
+                    )
                 } catch (e: Exception) {
-                    android.util.Log.w("HANDOFF", "takeover POST failed: ${e.message}")
+                    Log.w("HANDOFF", "takeover POST failed: ${e.message}")
+                    TakeoverOutcome(ok = false, error = e.message)
+                }
+
+                if (outcome.ok) {
+                    _sessions.value = _sessions.value.filterNot { it.sessionId == session.sessionId }
+                    _latestOtherSession.value = _sessions.value.pickLatestOther()
+                } else {
+                    // Keep the row so the user can retry, and say what happened.
+                    val why = if (outcome.forbidden) {
+                        "对方仍在播放：服务端拒绝了接管（权限不足）"
+                    } else {
+                        "对方可能仍在播放：接管请求未被服务端接受（${outcome.error ?: "未知"}）"
+                    }
+                    Log.w("HANDOFF", "takeover rejected: $why")
+                    mainHandler.post { Toast.makeText(context, why, Toast.LENGTH_LONG).show() }
+                    onDone?.invoke(false, why)
                 }
                 inheritBilingual(session)
                 try { refreshSessions() } catch (e: Exception) { }
@@ -360,11 +411,39 @@ object PlaybackHandoffManager {
             while (isActive && sseRunning) {
                 if (!NavidromeManager.checkActiveServers()) { kotlinx.coroutines.delay(5000); continue }
                 try {
-                    nativeApi.streamPlaybackHandoffEvents({ isActive && sseRunning && NavidromeManager.checkActiveServers() }) { ev -> handleHandoffEvent(ev, context) }
+                    nativeApi.streamPlaybackHandoffEvents(
+                        { isActive && sseRunning && NavidromeManager.checkActiveServers() },
+                        onHandoff = { ev -> handleHandoffEvent(ev, context) },
+                        onNowPlayingChanged = { onRemotePlaybackSignal() }
+                    )
                 } catch (e: Exception) {
                     if (e is kotlinx.coroutines.CancellationException) throw e
                 }
                 if (isActive && sseRunning) kotlinx.coroutines.delay(5000)
+            }
+        }
+    }
+
+    /**
+     * A device reported a playback state change somewhere on the server. Pull
+     * the session list now (debounced) so the dock's output chip ring reacts in
+     * well under a second instead of up to `AMBIENT_POLL_INTERVAL_MS`.
+     */
+    private suspend fun onRemotePlaybackSignal() {
+        nowPlayingSignalSeen = true
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (now - lastSignalRefreshAt < SIGNAL_DEBOUNCE_MS) return
+        lastSignalRefreshAt = now
+        if (signalRefreshJob?.isActive == true) return
+        signalRefreshJob = scope.launch {
+            kotlinx.coroutines.delay(SIGNAL_DEBOUNCE_MS)
+            try {
+                if (!NavidromeManager.checkActiveServers()) return@launch
+                refreshSessions()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w("HANDOFF", "signal refresh failed: ${e.message}")
             }
         }
     }

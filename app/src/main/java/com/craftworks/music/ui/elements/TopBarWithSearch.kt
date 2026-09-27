@@ -73,7 +73,7 @@ fun TopBarWithSearch(
                             else
                                 Icon(
                                     Icons.Rounded.Search,
-                                    contentDescription = "Back",
+                                    contentDescription = "Search",
                                 )
                         }
                     }

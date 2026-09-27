@@ -54,6 +54,8 @@ import com.craftworks.music.data.BottomNavItem
 import com.craftworks.music.managers.settings.AppTheme
 import com.craftworks.music.managers.settings.AppearanceSettingsManager
 import com.craftworks.music.managers.settings.MiniPlayerButtonLayout
+import com.craftworks.music.managers.settings.rememberAppearanceSettings
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.craftworks.music.ui.elements.bounceClick
 import com.craftworks.music.ui.playing.NowPlayingAlignment
 import com.craftworks.music.ui.playing.NowPlayingBackground
@@ -93,7 +95,8 @@ fun PreviewThemeDialog(){
 fun NameDialog(setShowDialog: (Boolean) -> Unit = {} ) {
     val coroutineScope = rememberCoroutineScope()
     val context = LocalContext.current
-    val username by AppearanceSettingsManager(context).usernameFlow.collectAsState("Username")
+    val settings = rememberAppearanceSettings()
+    val username by rememberAppearanceSettings().usernameFlow.collectAsStateWithLifecycle("Username")
     var usernameTextField by remember(username) { mutableStateOf(username) }
 
     AlertDialog(
@@ -104,7 +107,7 @@ fun NameDialog(setShowDialog: (Boolean) -> Unit = {} ) {
                 value = usernameTextField,
                 onValueChange = {
                     coroutineScope.launch {
-                        AppearanceSettingsManager(context).setUsername(it)
+                        settings.setUsername(it)
                     }
                 },
                 label = { stringResource(R.string.Setting_Username) },
@@ -114,7 +117,7 @@ fun NameDialog(setShowDialog: (Boolean) -> Unit = {} ) {
         confirmButton = {
             Button(onClick = {
                 coroutineScope.launch {
-                    AppearanceSettingsManager(context).setUsername(username)
+                    settings.setUsername(username)
                     setShowDialog(false)
                 }
             }) {
@@ -129,8 +132,9 @@ fun NameDialog(setShowDialog: (Boolean) -> Unit = {} ) {
 fun BackgroundDialog(setShowDialog: (Boolean) -> Unit) {
     val coroutineScope = rememberCoroutineScope()
     val context = LocalContext.current
+    val settings = rememberAppearanceSettings()
 
-    val backgroundType by AppearanceSettingsManager(context).npBackgroundFlow.collectAsState(NowPlayingBackground.ANIMATED_BLUR)
+    val backgroundType by rememberAppearanceSettings().npBackgroundFlow.collectAsStateWithLifecycle(NowPlayingBackground.ANIMATED_BLUR)
 
     val backgroundTypeLabels = mapOf(
         NowPlayingBackground.PLAIN to R.string.Background_Plain,
@@ -151,7 +155,7 @@ fun BackgroundDialog(setShowDialog: (Boolean) -> Unit) {
                                 selected = (option == backgroundType),
                                 onClick = {
                                     coroutineScope.launch {
-                                        AppearanceSettingsManager(context).setBackgroundType(option)
+                                        settings.setBackgroundType(option)
                                     }
                                     setShowDialog(false)
                                 },
@@ -164,7 +168,7 @@ fun BackgroundDialog(setShowDialog: (Boolean) -> Unit) {
                             selected = option == backgroundType,
                             onClick = {
                                 coroutineScope.launch {
-                                    AppearanceSettingsManager(context).setBackgroundType(option)
+                                    settings.setBackgroundType(option)
                                 }
                                 setShowDialog(false)
                             },
@@ -197,8 +201,9 @@ fun BackgroundDialog(setShowDialog: (Boolean) -> Unit) {
 fun ThemeDialog(setShowDialog: (Boolean) -> Unit) {
     val coroutineScope = rememberCoroutineScope()
     val context = LocalContext.current
+    val settings = rememberAppearanceSettings()
 
-    val selectedTheme by AppearanceSettingsManager(context).appTheme.collectAsState(
+    val selectedTheme by AppearanceSettingsManager(context).appTheme.collectAsStateWithLifecycle(
         AppTheme.SYSTEM.name)
 
     val themes = listOf(
@@ -224,7 +229,7 @@ fun ThemeDialog(setShowDialog: (Boolean) -> Unit) {
                                 selected = (option.name == selectedTheme),
                                 onClick = {
                                     coroutineScope.launch {
-                                        AppearanceSettingsManager(context).setAppTheme(option)
+                                        settings.setAppTheme(option)
                                         val uiModeManager =
                                             context.getSystemService(Context.UI_MODE_SERVICE) as UiModeManager
 
@@ -273,7 +278,7 @@ fun ThemeDialog(setShowDialog: (Boolean) -> Unit) {
                             selected = option.name == selectedTheme,
                             onClick = {
                                 coroutineScope.launch {
-                                    AppearanceSettingsManager(context).setAppTheme(option)
+                                    settings.setAppTheme(option)
                                     val uiModeManager = context.getSystemService(Context.UI_MODE_SERVICE) as UiModeManager
 
                                     when (option) {
@@ -320,9 +325,10 @@ fun ThemeDialog(setShowDialog: (Boolean) -> Unit) {
 @Composable
 fun NavbarItemsDialog(setShowDialog: (Boolean) -> Unit) {
     val context = LocalContext.current
+    val settings = rememberAppearanceSettings()
     val coroutineScope = rememberCoroutineScope()
     val bottomNavigationItems =
-        (AppearanceSettingsManager(context).bottomNavItemsFlow.collectAsState(null).value ?: emptyList()).toMutableList()
+        (rememberAppearanceSettings().bottomNavItemsFlow.collectAsStateWithLifecycle(emptyList()).value).toMutableList()
 
     val navItemTitleMap = remember {
         mapOf(
@@ -340,7 +346,7 @@ fun NavbarItemsDialog(setShowDialog: (Boolean) -> Unit) {
             val lazyListState = rememberLazyListState()
             val reorderableLazyColumnState =
                 rememberReorderableLazyListState(lazyListState) { from, to ->
-                    AppearanceSettingsManager(context).setBottomNavItems(bottomNavigationItems.toMutableList()
+                    settings.setBottomNavItems(bottomNavigationItems.toMutableList()
                         .apply {
                             add(to.index, removeAt(from.index))
                         })
@@ -366,7 +372,7 @@ fun NavbarItemsDialog(setShowDialog: (Boolean) -> Unit) {
                                 onCheckedChange = {
                                     coroutineScope.launch {
                                         bottomNavigationItems[index] = bottomNavigationItems[index].copy(enabled = it)
-                                        AppearanceSettingsManager(context).setBottomNavItems(bottomNavigationItems)
+                                        settings.setBottomNavItems(bottomNavigationItems)
                                     }
                                 },
                                 modifier = Modifier
@@ -411,7 +417,7 @@ fun NavbarItemsDialog(setShowDialog: (Boolean) -> Unit) {
             OutlinedButton(
                 onClick = {
                     coroutineScope.launch {
-                        AppearanceSettingsManager(context).setBottomNavItems(
+                        settings.setBottomNavItems(
                             //region Default Values
                             mutableStateListOf(
                                 BottomNavItem(
@@ -451,9 +457,10 @@ fun NavbarItemsDialog(setShowDialog: (Boolean) -> Unit) {
 @Composable
 fun HomeItemsDialog(setShowDialog: (Boolean) -> Unit) {
     val context = LocalContext.current
+    val settings = rememberAppearanceSettings()
     val coroutineScope = rememberCoroutineScope()
     val homeItems =
-        (AppearanceSettingsManager(context).homeItemsItemsFlow.collectAsState(null).value ?: emptyList()).toMutableList()
+        (rememberAppearanceSettings().homeItemsItemsFlow.collectAsStateWithLifecycle(emptyList()).value).toMutableList()
 
     AlertDialog(
         onDismissRequest = { setShowDialog(false) },
@@ -462,7 +469,7 @@ fun HomeItemsDialog(setShowDialog: (Boolean) -> Unit) {
             val lazyListState = rememberLazyListState()
             val reorderableLazyColumnState =
                 rememberReorderableLazyListState(lazyListState) { from, to ->
-                    AppearanceSettingsManager(context).setHomeItems(homeItems.toMutableList()
+                    settings.setHomeItems(homeItems.toMutableList()
                         .apply {
                             add(to.index, removeAt(from.index))
                         })
@@ -487,7 +494,7 @@ fun HomeItemsDialog(setShowDialog: (Boolean) -> Unit) {
                                 onCheckedChange = {
                                     coroutineScope.launch {
                                         homeItems[index] = homeItems[index].copy(enabled = it)
-                                        AppearanceSettingsManager(context).setHomeItems(homeItems)
+                                        settings.setHomeItems(homeItems)
                                     }
                                 },
                                 modifier = Modifier
@@ -539,7 +546,7 @@ fun HomeItemsDialog(setShowDialog: (Boolean) -> Unit) {
             OutlinedButton(
                 onClick = {
                     coroutineScope.launch {
-                        AppearanceSettingsManager(context).setHomeItems(
+                        settings.setHomeItems(
                             //region Default Values
                             mutableStateListOf(
                                 HomeItem(

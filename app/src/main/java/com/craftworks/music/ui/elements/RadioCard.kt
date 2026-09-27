@@ -60,7 +60,8 @@ fun RadioCard(
                 .crossfade(true).build(),
             fallback = painterResource(R.drawable.placeholder),
             contentScale = ContentScale.FillWidth,
-            contentDescription = "Album Image",
+            // decorative: the title sits right next to this image
+            contentDescription = null,
             modifier = Modifier
                 .fillMaxSize()
                 .clip(RoundedCornerShape(12.dp))

@@ -49,9 +49,10 @@ fun AlbumCard(
     val cacheKey = album.mediaMetadata.extras?.getString("navidromeID") ?: album.mediaId
     Column(
         modifier = modifier
-            //.padding(12.dp, 0.dp, 0.dp, 0.dp)
-            .width(128.dp)
-            //.height(172.dp)
+            // No width here on purpose. This card is hosted both by a LazyRow
+            // (which passes its own fixed width) and by LazyVerticalGrid with
+            // GridCells.Adaptive(96.dp) — a hard-coded 128 dp overflowed the
+            // ~104 dp grid cell on every phone, clipping the last column.
             .clip(RoundedCornerShape(12.dp))
             .clickable(onClick = onClick),
         horizontalAlignment = Alignment.CenterHorizontally
@@ -68,7 +69,8 @@ fun AlbumCard(
                     .diskCacheKey(cacheKey)
                     .crossfade(false)
                     .build(),
-                contentDescription = "Album Image",
+                // decorative: the title sits right next to this image
+                contentDescription = null,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier
                     .fillMaxSize()

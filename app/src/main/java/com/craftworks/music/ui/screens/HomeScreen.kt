@@ -107,6 +107,18 @@ fun HomeScreen(
     val state = rememberPullToRefreshState()
     val isLoading by viewModel.isLoading.collectAsStateWithLifecycle()
 
+    // Hoisted out of the `orderedHomeItems.forEach` below: a remember inside a
+    // loop is a *positional* slot, so reordering home items in settings shifted
+    // every slot and could hand one item another's state.
+    val homeItemTitleMap = remember {
+        mapOf(
+            "recently_played" to R.string.recently_played,
+            "recently_added" to R.string.recently_added,
+            "most_played" to R.string.most_played,
+            "random_songs" to R.string.random_songs
+        )
+    }
+
     var showRipple by remember { mutableIntStateOf(0) }
     val rippleXOffset = LocalWindowInfo.current.containerSize.width / 2
 
@@ -136,9 +148,9 @@ fun HomeScreen(
                     )
             ) {
                 Row (Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-                    val username = rememberAppearanceSettings().usernameFlow.collectAsState("Username")
+                    val username = rememberAppearanceSettings().usernameFlow.collectAsStateWithLifecycle("Username")
                     val showNavidromeLogo =
-                        rememberAppearanceSettings().showNavidromeLogoFlow.collectAsState(true).value && NavidromeManager.checkActiveServers()
+                        rememberAppearanceSettings().showNavidromeLogoFlow.collectAsStateWithLifecycle(true).value && NavidromeManager.checkActiveServers()
 
                     if (showNavidromeLogo) NavidromeLogo()
 
@@ -270,7 +282,7 @@ fun HomeScreen(
                                 {
                                     Icon(
                                         imageVector = Icons.Filled.Done,
-                                        contentDescription = "Done icon",
+                                        contentDescription = null,
                                         modifier = Modifier.size(FilterChipDefaults.IconSize)
                                     )
                                 }
@@ -284,8 +296,8 @@ fun HomeScreen(
             }
 
 
-            val orderedHomeItems = rememberAppearanceSettings().homeItemsItemsFlow.collectAsState(
-                initial = listOf(
+            val orderedHomeItems = rememberAppearanceSettings().homeItemsItemsFlow.collectAsStateWithLifecycle(
+                initialValue = listOf(
                     HomeItem(
                         "recently_played",
                         true
@@ -315,18 +327,9 @@ fun HomeScreen(
                         else -> emptyList()
                     }
 
-                    val titleMap = remember {
-                        mapOf(
-                            "recently_played" to R.string.recently_played,
-                            "recently_added" to R.string.recently_added,
-                            "most_played" to R.string.most_played,
-                            "random_songs" to R.string.random_songs
-                        )
-                    }
-
                     AlbumRow(
                         item.key,
-                        titleMap[item.key],
+                        homeItemTitleMap[item.key],
                         albums,
                         mediaController,
                         navHostController,

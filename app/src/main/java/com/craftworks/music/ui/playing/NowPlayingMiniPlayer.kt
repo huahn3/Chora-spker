@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -293,7 +294,10 @@ fun NowPlayingMiniPlayer(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
-            .height(72.dp)
+            // heightIn, not height: at ~1.8x system font scale the two text
+            // lines plus the 12dp waveform overflowed a fixed 72dp and were
+            // clipped.
+            .heightIn(min = 72.dp)
             .clickable { onClick.invoke() }
             .padding(horizontal = 12.dp)
     ) {
@@ -301,7 +305,7 @@ fun NowPlayingMiniPlayer(
             // Both buttons grouped at the leading edge for left-thumb reach.
             MiniPlayerButtonLayout.LEFT_PAIRED -> {
                 coverArt(Modifier)
-                Spacer(Modifier.width(4.dp))
+                Spacer(Modifier.width(6.dp))
                 outputChip()
                 Spacer(Modifier.width(12.dp))
                 centerText(Modifier.weight(1f))
@@ -319,7 +323,7 @@ fun NowPlayingMiniPlayer(
                 centerText(Modifier.weight(1f))
                 Spacer(Modifier.width(12.dp))
                 coverArt(Modifier)
-                Spacer(Modifier.width(4.dp))
+                Spacer(Modifier.width(6.dp))
                 outputChip()
             }
         }
@@ -360,13 +364,20 @@ private fun MiniPlayerCoverArt(
             strokeWidth = 2.5.dp
         )
 
-        // Round album cover
-        SubcomposeAsyncImage(
-            model = ImageRequest.Builder(LocalContext.current)
+        // Round album cover. The request is remembered: this composable
+        // recomposes on every 500 ms position tick, and a fresh ImageRequest
+        // (which allocates a whole options map) each time was pure garbage.
+        val context = LocalContext.current
+        val request = remember(artworkUri, songId) {
+            ImageRequest.Builder(context)
                 .data(artworkUri)
+                .memoryCacheKey(songId)
                 .diskCacheKey(songId)
                 .crossfade(true)
-                .build(),
+                .build()
+        }
+        SubcomposeAsyncImage(
+            model = request,
             contentDescription = "Album Cover",
             contentScale = ContentScale.Crop,
             alignment = Alignment.Center,
@@ -449,6 +460,7 @@ private fun MiniPlayerCenterText(
                     modifier = Modifier
                         .fillMaxWidth()
                         .basicMarquee()
+                        
                 )
             }
 
@@ -465,6 +477,7 @@ private fun MiniPlayerCenterText(
                     modifier = Modifier
                         .fillMaxWidth()
                         .basicMarquee()
+                        
                 )
             }
         } else {
@@ -498,6 +511,7 @@ private fun MiniPlayerCenterText(
                         modifier = Modifier
                             .fillMaxWidth()
                             .basicMarquee()
+                            
                     )
                     if (subText.isNotBlank()) {
                         Text(
@@ -511,6 +525,7 @@ private fun MiniPlayerCenterText(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .basicMarquee()
+                                
                         )
                     }
                 }

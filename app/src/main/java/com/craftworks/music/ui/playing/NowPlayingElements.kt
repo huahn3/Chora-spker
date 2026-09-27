@@ -55,6 +55,9 @@ import com.craftworks.music.data.model.PlaybackSessionDto
 import com.craftworks.music.managers.JukeboxManager
 import com.craftworks.music.managers.PlaybackHandoffManager
 import com.craftworks.music.player.ChoraMediaLibraryService
+import androidx.core.net.toUri
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -71,6 +74,7 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.vectorResource
@@ -100,7 +104,7 @@ import com.craftworks.music.data.repository.LyricsState
 import com.craftworks.music.formatMilliseconds
 import com.craftworks.music.providers.navidrome.downloadNavidromeSong
 import com.craftworks.music.ui.elements.bounceClick
-import com.craftworks.music.ui.elements.moveClick
+import com.craftworks.music.ui.elements.pressSlide
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -341,15 +345,27 @@ fun PlaybackProgressSlider(
 
 @androidx.annotation.OptIn(UnstableApi::class)
 @Composable
-internal fun PreviousSongButton(player: Player, color: Color, modifier: Modifier = Modifier) {
+internal fun PreviousSongButton(
+    player: Player,
+    color: Color,
+    modifier: Modifier = Modifier,
+    iconSize: Dp = ActionButtonIconSize
+) {
     val state = rememberPreviousButtonState(player)
-    IconButton(onClick = state::onClick, modifier = modifier
-        .bounceClick(state.isEnabled)
-        .moveClick(false, state.isEnabled), enabled = state.isEnabled) {
+    // No press animation on the container: `moveClick` offset it 12 dp on
+    // press, which moved the hit-test bounds with it and killed taps on the
+    // outer edge. The effect now lives on the Icon (see pressSlide).
+    IconButton(onClick = state::onClick, modifier = modifier, enabled = state.isEnabled) {
         Icon(
             imageVector = ImageVector.vectorResource(R.drawable.media3_notification_seek_to_previous),
             contentDescription = "Previous song",
-            modifier = modifier,
+            // NOT `modifier`: the caller sizes the TOUCH TARGET; the glyph gets
+            // its own `iconSize`. Sharing one modifier meant the target was
+            // pinned to the glyph size (Shuffle/Repeat were 24 dp wide).
+            modifier = Modifier
+                .size(iconSize)
+                .bounceClick(state.isEnabled)
+                .pressSlide(right = false, enabled = state.isEnabled),
             tint = if (state.isEnabled) color else color.copy(0.5f)
         )
     }
@@ -357,15 +373,27 @@ internal fun PreviousSongButton(player: Player, color: Color, modifier: Modifier
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-internal fun PlayPauseButton(player: Player, color: Color, modifier: Modifier = Modifier) {
+internal fun PlayPauseButton(
+    player: Player,
+    color: Color,
+    modifier: Modifier = Modifier,
+    iconSize: Dp = ActionButtonIconSize
+) {
     val state = rememberPlayPauseButtonState(player)
     val icon = if (state.showPlay) Icons.Rounded.PlayArrow else ImageVector.vectorResource(R.drawable.media3_notification_pause)
     val contentDescription =
         if (state.showPlay) "play"
         else "pause"
 
-    IconButton(onClick = state::onClick, modifier = modifier.bounceClick(state.isEnabled), enabled = state.isEnabled) {
-        Icon(icon, contentDescription = contentDescription, modifier = modifier, tint = if (state.isEnabled) color else color.copy(0.5f))
+    IconButton(onClick = state::onClick, modifier = modifier, enabled = state.isEnabled) {
+        Icon(
+            icon,
+            contentDescription = contentDescription,
+            modifier = Modifier
+                .size(iconSize)
+                .bounceClick(state.isEnabled),
+            tint = if (state.isEnabled) color else color.copy(0.5f)
+        )
     }
 //    ToggleButton(
 //        checked = state.showPlay,
@@ -382,15 +410,22 @@ internal fun PlayPauseButton(player: Player, color: Color, modifier: Modifier = 
 
 @androidx.annotation.OptIn(UnstableApi::class)
 @Composable
-internal fun NextSongButton(player: Player, color: Color, modifier: Modifier = Modifier) {
+internal fun NextSongButton(
+    player: Player,
+    color: Color,
+    modifier: Modifier = Modifier,
+    iconSize: Dp = ActionButtonIconSize
+) {
     val state = rememberNextButtonState(player)
-    IconButton(onClick = state::onClick, modifier = modifier
-        .bounceClick(state.isEnabled)
-        .moveClick(true, state.isEnabled), enabled = state.isEnabled) {
+    // See PreviousSongButton: the press slide moved the hit target.
+    IconButton(onClick = state::onClick, modifier = modifier, enabled = state.isEnabled) {
         Icon(
             imageVector = ImageVector.vectorResource(R.drawable.media3_notification_seek_to_next),
             contentDescription = "Next song",
-            modifier = modifier,
+            modifier = Modifier
+                .size(iconSize)
+                .bounceClick(state.isEnabled)
+                .pressSlide(right = true, enabled = state.isEnabled),
             tint = if (state.isEnabled) color else color.copy(0.5f)
         )
     }
@@ -462,7 +497,7 @@ fun LyricsButton(
  */
 private val ActionButtonBoxSize = 44.dp
 private val ActionButtonIconSize = 24.dp
-private val CHIP_ICON_SIZE = 22.dp
+private val CHIP_ICON_SIZE = 21.dp
 private const val ActionButtonAlpha = 0.62f
 private const val ActionButtonDisabledAlpha = 0.28f
 
@@ -649,8 +684,9 @@ fun OutputDeviceButton(
 /**
  * Dock output-device chip. Mirrors the album-art button's exact geometry — a
  * 48dp / 2.5dp progress ring wrapping a 42dp content disc, both inside the same
- * 52dp footprint — so the two circles read as a matched pair instead of a flat
- * grey blob sitting next to cover art.
+ * 52dp footprint — but stays deliberately quieter than the cover: a soft
+ * top-lit face instead of a flat fill, and a 21dp glyph on the nav row's tint
+ * scale. The cover stays the only saturated circle in the row.
  *
  * The ring is a status display for "audio is living somewhere else":
  * - our own stream pushed to a Jukebox speaker -> full ring
@@ -678,24 +714,35 @@ private fun OutputDeviceChip(
     // Either signal means "not playing out of this phone".
     val isRemote = isRemoteActive || otherSession != null
 
-    val ringTrack = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
-    val discBrush = if (isRemote) {
+    // Colour/metrics borrowed from `DockNavRow` on purpose (21dp glyph, 0.65
+    // onSurfaceVariant idle tint, primary when live) so the chip reads as part of
+    // the dock instead of a third floating element between two hero circles.
+    val ringColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.92f)
+    val ringTrack = if (isRemote) {
+        MaterialTheme.colorScheme.primary.copy(alpha = 0.22f)
+    } else {
+        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+    }
+    // A top-lit button face. `surfaceContainerHighest` is theme-relative, so the
+    // same two alphas read as a soft raised disc in dark and a soft tinted one in
+    // light — no flat blob that fights the album art.
+    val faceBrush = if (isRemote) {
         Brush.verticalGradient(
             listOf(
-                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.70f),
-                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.40f)
+                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.58f),
+                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.26f)
             )
         )
     } else {
         Brush.verticalGradient(
             listOf(
-                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f),
-                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.36f)
+                MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.42f),
+                MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.10f)
             )
         )
     }
     val iconTint = if (isRemote) MaterialTheme.colorScheme.primary
-    else color.copy(alpha = 0.85f)
+    else color.copy(alpha = 0.65f)
 
     val onLongClick: () -> Unit = {
         val session = otherSession
@@ -743,7 +790,7 @@ private fun OutputDeviceChip(
                 }
             },
             modifier = Modifier.size(48.dp),
-            color = MaterialTheme.colorScheme.primary,
+            color = ringColor,
             trackColor = ringTrack,
             strokeWidth = 2.5.dp
         )
@@ -752,14 +799,52 @@ private fun OutputDeviceChip(
             modifier = Modifier
                 .size(42.dp)
                 .clip(CircleShape)
-                .background(discBrush)
+                .background(faceBrush)
         )
+
+        // When another device is playing, paint its cover into the same 42dp disc
+        // the cover button uses. The two circles then read as one matched pair
+        // ("art + ring") instead of a photo next to an empty socket, and the chip
+        // doubles as a preview of what a long-press would take over.
+        val coverUrl = otherSession?.coverArtUrl
+        // Keyed on the asset id, never the URL: the signed URL carries a fresh
+        // salt on every poll, so a URL cache key would re-download every 10s.
+        val artCacheKey = otherSession?.let { "chip_handoff_cover_" + (it.coverArtId ?: it.songId) }
+        var artFailed by remember(artCacheKey) { mutableStateOf(false) }
+        val chipArtRequest = remember(coverUrl, artCacheKey) {
+            coverUrl?.let {
+                ImageRequest.Builder(context)
+                    .data(it.toUri())
+                    .memoryCacheKey(artCacheKey)
+                    .diskCacheKey(artCacheKey)
+                    .crossfade(true)
+                    .build()
+            }
+        }
+        if (chipArtRequest != null && !artFailed) {
+            AsyncImage(
+                model = chipArtRequest,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                onError = { artFailed = true },
+                modifier = Modifier.size(42.dp).clip(CircleShape)
+            )
+            // Byte-for-byte the cover button's play/pause scrim, so the glyph
+            // reads with the same contrast over arbitrary artwork.
+            Box(
+                modifier = Modifier
+                    .size(42.dp)
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 0.45f))
+            )
+        }
 
         if (isTakingOver) {
             CircularProgressIndicator(
                 modifier = Modifier.size(18.dp),
                 strokeWidth = 2.dp,
-                color = MaterialTheme.colorScheme.primary
+                color = if (coverUrl != null && !artFailed) Color.White
+                else MaterialTheme.colorScheme.primary
             )
         } else {
             Icon(
@@ -768,9 +853,10 @@ private fun OutputDeviceChip(
                 modifier = Modifier
                     .size(CHIP_ICON_SIZE)
                     // The phone/speaker glyphs are the narrowest of the three, so
-                    // widen them slightly to reach the cover button's optical weight.
-                    .graphicsLayer { scaleX = 1.12f },
-                tint = iconTint
+                    // widen them slightly to reach optical parity with the glyphs
+                    // in the nav row below (which are plain 21dp).
+                    .graphicsLayer { scaleX = 1.15f },
+                tint = if (coverUrl != null && !artFailed) Color.White else iconTint
             )
         }
     }
@@ -799,12 +885,14 @@ private fun rememberHandoffProgress(session: PlaybackSessionDto?): Float {
 
     LaunchedEffect(sessionId, durationMs, session.state) {
         val playing = session.state == "playing"
+        // A paused remote session can never advance, so writing `progress` twice
+        // a second just invalidated the chip for nothing. Idle instead.
+        if (!playing) {
+            progress = (basePosition.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
+            return@LaunchedEffect
+        }
         while (true) {
-            val position = if (playing) {
-                basePosition + (SystemClock.elapsedRealtime() - baseElapsed)
-            } else {
-                basePosition
-            }
+            val position = basePosition + (SystemClock.elapsedRealtime() - baseElapsed)
             progress = (position.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
             delay(500L)
         }
@@ -881,17 +969,24 @@ fun SleepTimerButton(
 
 @androidx.annotation.OptIn(UnstableApi::class)
 @Composable
-internal fun ShuffleButton(player: Player, color: Color, modifier: Modifier = Modifier) {
+internal fun ShuffleButton(
+    player: Player,
+    color: Color,
+    modifier: Modifier = Modifier,
+    iconSize: Dp = ActionButtonIconSize
+) {
     val state = rememberShuffleButtonState(player)
     IconButton(
         onClick = state::onClick,
-        modifier = modifier.bounceClick(),
+        modifier = modifier,
         enabled = state.isEnabled
     ) {
         Icon(
             imageVector = ImageVector.vectorResource(R.drawable.round_shuffle_28),
             contentDescription = "Shuffle",
-            modifier = modifier,
+            modifier = Modifier
+                .size(iconSize)
+                .bounceClick(state.isEnabled),
             tint = color.copy(if (state.shuffleOn) 1f else 0.5f)
         )
     }
@@ -899,18 +994,25 @@ internal fun ShuffleButton(player: Player, color: Color, modifier: Modifier = Mo
 
 @androidx.annotation.OptIn(UnstableApi::class)
 @Composable
-internal fun RepeatButton(player: Player, color: Color, modifier: Modifier = Modifier) {
+internal fun RepeatButton(
+    player: Player,
+    color: Color,
+    modifier: Modifier = Modifier,
+    iconSize: Dp = ActionButtonIconSize
+) {
     val state = rememberRepeatButtonState(player)
     val icon = repeatModeIcon(state.repeatModeState)
     IconButton(
         onClick = state::onClick,
-        modifier = modifier.bounceClick(),
+        modifier = modifier,
         enabled = state.isEnabled
     ) {
         Icon(
             imageVector = icon,
             contentDescription = "Repeat",
-            modifier = modifier,
+            modifier = Modifier
+                .size(iconSize)
+                .bounceClick(state.isEnabled),
             tint = color.copy(if (state.repeatModeState == Player.REPEAT_MODE_OFF) 0.5f else 1f)
         )
     }

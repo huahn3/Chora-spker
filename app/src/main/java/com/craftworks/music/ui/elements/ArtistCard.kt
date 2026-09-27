@@ -55,7 +55,8 @@ fun ArtistCard(artist: MediaData.Artist, onClick: () -> Unit) {
                 .fallback(R.drawable.rounded_artist_24)
                 .build(),
             contentScale = ContentScale.Crop,
-            contentDescription = "Artist Image",
+            // decorative: the title sits right next to this image
+            contentDescription = null,
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(1f)
