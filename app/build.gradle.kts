@@ -33,6 +33,10 @@ android {
         }
     }
 
+    buildFeatures {
+        buildConfig = true
+    }
+
     // Optional real release signing. Drop a `keystore.properties` at the repo
     // root (git-ignored) with storeFile / storePassword / keyAlias / keyPassword
     // and release builds get signed with it. Without the file, release falls back

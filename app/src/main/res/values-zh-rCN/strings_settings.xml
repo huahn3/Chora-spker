@@ -12,6 +12,7 @@
     <string name="Setting_NavidromeLogo">显示 Navidrome 图标</string>
     <string name="Setting_ProviderDividers">显示媒体源分隔</string>
     <string name="Setting_RefreshAnimation">显示刷新动画</string>
+    <string name="Setting_LyricsFadingEdges">歌词边缘渐隐</string>
     <string name="Setting_LyricsAnimationSpeed">歌词动画速度</string>
     <string name="Setting_LyricsAutoscroll">纯文本歌词自动滚动</string>
     <string name="Setting_LyricsRecenter">滚动后自动归位当前歌词</string>

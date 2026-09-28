@@ -11,6 +11,7 @@
     <string name="Setting_NavidromeLogo">Navidrome-Logo anzeigen</string>
     <string name="Setting_ProviderDividers">Provider-Trennzeichen anzeigen</string>
     <string name="Setting_RefreshAnimation">Aktualisierungsanimation anzeigen</string>
+    <string name="Setting_LyricsFadingEdges">Randabfall der Songtexte</string>
     <string name="Setting_LyricsAnimationSpeed">Songtext-Animationsgeschwindigkeit</string>
     <string name="Setting_LyricsAutoscroll">Autoscroll Plain Lyrics</string>
     <string name="Setting_LyricsRecenter">Recenter After Scroll</string>

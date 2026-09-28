@@ -582,6 +582,20 @@ fun S_AppearanceScreen(navHostController: NavHostController = rememberNavControl
                         enabled = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
                     )
 
+                    // Lyrics edge fade (A/B against a hard cut)
+                    val lyricsFadingEdges =
+                        settings.lyricsFadingEdgesFlow.collectAsStateWithLifecycle(true)
+                    SettingsSwitch(
+                        lyricsFadingEdges.value,
+                        stringResource(R.string.Setting_LyricsFadingEdges),
+                        ImageVector.vectorResource(R.drawable.rounded_lyrics_fade_24),
+                        toggleEvent = {
+                            coroutineScope.launch {
+                                AppearanceSettingsManager(context).setLyricsFadingEdges(!lyricsFadingEdges.value)
+                            }
+                        }
+                    )
+
                     // Track numbers in album view
                     val showTrackNumbers =
                         settings.showTrackNumbersFlow.collectAsStateWithLifecycle(true)

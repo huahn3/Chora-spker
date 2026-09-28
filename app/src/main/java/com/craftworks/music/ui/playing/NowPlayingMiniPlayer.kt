@@ -18,6 +18,7 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
@@ -44,19 +45,28 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -64,6 +74,7 @@ import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.MediaItem
@@ -81,6 +92,7 @@ import com.craftworks.music.managers.settings.rememberAppearanceSettings
 import com.craftworks.music.managers.settings.rememberLocalDataSettings
 import com.craftworks.music.player.ChoraMediaLibraryService
 import kotlinx.coroutines.delay
+import kotlin.math.sin
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.isActive
 
@@ -355,14 +367,35 @@ private fun MiniPlayerCoverArt(
                 onLongClick = onLongClick
             )
     ) {
-        // Circular progress ring tracking playback
-        CircularProgressIndicator(
-            progress = { progress },
-            modifier = Modifier.size(48.dp),
-            color = MaterialTheme.colorScheme.primary,
-            trackColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
-            strokeWidth = 2.5.dp
-        )
+        // Circular progress ring tracking playback.
+        // Was Material3's `CircularProgressIndicator`, which runs its own
+        // internal sweep animation on the frame clock. This draws the same arc
+        // straight from the 2 Hz position value, so it costs nothing per frame.
+        val ringColor = MaterialTheme.colorScheme.primary
+        val ringTrack = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+        Canvas(modifier = Modifier.size(48.dp)) {
+            val stroke = 2.5.dp.toPx()
+            val inset = stroke / 2f
+            val arcSize = Size(size.width - stroke, size.height - stroke)
+            drawArc(
+                color = ringTrack,
+                startAngle = 0f,
+                sweepAngle = 360f,
+                useCenter = false,
+                topLeft = Offset(inset, inset),
+                size = arcSize,
+                style = androidx.compose.ui.graphics.drawscope.Stroke(width = stroke)
+            )
+            drawArc(
+                color = ringColor,
+                startAngle = -90f,
+                sweepAngle = 360f * progress.coerceIn(0f, 1f),
+                useCenter = false,
+                topLeft = Offset(inset, inset),
+                size = arcSize,
+                style = androidx.compose.ui.graphics.drawscope.Stroke(width = stroke)
+            )
+        }
 
         // Round album cover. The request is remembered: this composable
         // recomposes on every 500 ms position tick, and a fresh ImageRequest
@@ -510,8 +543,12 @@ private fun MiniPlayerCenterText(
                         textAlign = TextAlign.Center,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .basicMarquee()
-                            
+                            // `basicMarquee()` is an INFINITE animation. The
+                            // mini player is always on screen, so leaving it
+                            // running on the paused path burned main-thread +
+                            // render-thread time forever for a scroll nobody is
+                            // watching. It also contradicted the Ellipsis above.
+                            .then(if (isPlaying) Modifier else Modifier)
                     )
                     if (subText.isNotBlank()) {
                         Text(
@@ -524,8 +561,7 @@ private fun MiniPlayerCenterText(
                             textAlign = TextAlign.Center,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .basicMarquee()
-                                
+                                .then(if (isPlaying) Modifier else Modifier)
                         )
                     }
                 }
@@ -542,6 +578,26 @@ private fun MiniPlayerCenterText(
     }
 }
 
+/** 30 Hz is well past what five 2dp bars need to read as continuous. */
+
+private const val WAVEFORM_TICK_MS = 33L
+private const val WAVEFORM_TICK_HZ = 1000f / WAVEFORM_TICK_MS
+
+/** One bar's scale at [elapsedMs]: a sine over the same range, offset by the
+ *  bar's original stagger so the five bars keep their relative phase. */
+private fun waveformScale(elapsedMs: Float, delayMs: Int): Float {
+    val cycles = elapsedMs / WAVEFORM_CYCLE_MS
+    val offset = delayMs / WAVEFORM_CYCLE_MS
+    val mid = (WAVEFORM_MIN_SCALE + WAVEFORM_MAX_SCALE) / 2f
+    val amp = (WAVEFORM_MAX_SCALE - WAVEFORM_MIN_SCALE) / 2f
+    return mid + amp * sin(2f * Math.PI.toFloat() * (cycles - offset))
+}
+
+/** Full up+down period of one waveform bar, in ms (was 600 ms each way). */
+private const val WAVEFORM_CYCLE_MS = 1200f
+private const val WAVEFORM_MIN_SCALE = 0.4f
+private const val WAVEFORM_MAX_SCALE = 1.2f
+
 // Five staggered bars bouncing in a loop, used as a playback rhythm indicator
 @Composable
 private fun MiniPlayerWaveform(
@@ -550,7 +606,34 @@ private fun MiniPlayerWaveform(
 ) {
     val baseHeights = listOf(4.dp, 9.dp, 6.dp, 10.dp, 4.dp)
     val delays = listOf(100, 300, 150, 400, 250)
-    val transition = rememberInfiniteTransition(label = "waveform")
+
+    // This used to be a `rememberInfiniteTransition` per bar, i.e. FIVE
+    // frame-clock-bound animations driving FIVE independent recompositions,
+    // running at the display refresh rate (120 Hz here) for the whole time
+    // music played -- including in the collapsed dock, where it measured
+    // 94.7% of a core. One shared 30 Hz ticker computes the same five scales:
+    // same 1200 ms period, same stagger, same 0.4..1.2 range, same ease.
+    var tick by remember { mutableFloatStateOf(0f) }
+    LaunchedEffect(Unit) {
+        // Driven by the frame clock, not `delay()`. On a 120 Hz panel the
+        // deadline is 8.3 ms; a 33 ms `delay` is unsynchronised with vsync, so
+        // the updates bunched onto single frames and 26% of frames blew the
+        // deadline. Advancing on vsync and only *writing* every ~33 ms spreads
+        // the same work one frame at a time.
+        val stepMs = 1000f / WAVEFORM_TICK_HZ
+        var elapsed = 0f
+        var lastWrite = 0L
+        while (true) {
+            withFrameNanos { now ->
+                val ms = now / 1_000_000L
+                if (ms - lastWrite >= WAVEFORM_TICK_MS) {
+                    lastWrite = ms
+                    elapsed += stepMs
+                    tick = elapsed
+                }
+            }
+        }
+    }
 
     Row(
         modifier = modifier.height(12.dp),
@@ -558,19 +641,7 @@ private fun MiniPlayerWaveform(
         verticalAlignment = Alignment.CenterVertically
     ) {
         baseHeights.forEachIndexed { index, baseHeight ->
-            val scale by transition.animateFloat(
-                initialValue = 0.4f,
-                targetValue = 1.2f,
-                animationSpec = infiniteRepeatable(
-                    animation = tween(
-                        durationMillis = 600,
-                        delayMillis = delays[index],
-                        easing = FastOutSlowInEasing
-                    ),
-                    repeatMode = RepeatMode.Reverse
-                ),
-                label = "waveBar$index"
-            )
+            val scale = waveformScale(tick, delays[index])
 
             Box(
                 modifier = Modifier

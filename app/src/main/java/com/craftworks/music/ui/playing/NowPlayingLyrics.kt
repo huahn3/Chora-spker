@@ -211,6 +211,12 @@ fun LyricsView(
     var isSeekIndicatorVisible by remember { mutableStateOf(false) }
     var hideSeekIndicatorJob by remember { mutableStateOf<Job?>(null) }
 
+    // Edge fade is user-switchable: the effect costs the most remaining GPU on
+    // this screen, so it has to be possible to A/B it against a hard cut.
+    val useFadingEdges by rememberAppearanceSettings()
+        .lyricsFadingEdgesFlow
+        .collectAsStateWithLifecycle(true)
+
     LaunchedEffect(isDragged) {
         if (isDragged) {
             hideSeekIndicatorJob?.cancel()
@@ -437,25 +443,33 @@ fun LyricsView(
                     }
                 }
 
-                SelectionContainer {
-                    LazyColumn(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(paddingValues)
-                            .padding(horizontal = 56.dp)
-                            .onSizeChanged { size ->
-                                scrollOffset = (size.height * 0.2f).toInt()
-                                plainLyricsViewportHeightPx = size.height.toFloat()
-                            }
-                            .verticalFadingEdges(
-                                FadingEdgesContentType.Dynamic.Lazy.List(
-                                    FadingEdgesScrollConfig.Dynamic(),
-                                    state
-                                ),
-                                FadingEdgesGravity.All,
-                                96.dp
-                            ),
-                        verticalArrangement = Arrangement.Top,
+                // No SelectionContainer here on purpose. Wrapping the whole
+                // LazyColumn put selection gesture handling on every visible
+                // line, which is a per-item cost paid for a feature nobody used:
+                // long-pressing a line already copies it through the dialog
+                // below, and that dialog carries its own SelectionContainer.
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(paddingValues)
+                        .padding(horizontal = 56.dp)
+                        .onSizeChanged { size ->
+                            scrollOffset = (size.height * 0.2f).toInt()
+                            plainLyricsViewportHeightPx = size.height.toFloat()
+                        }
+                        .then(
+                            if (useFadingEdges)
+                                Modifier.verticalFadingEdges(
+                                    FadingEdgesContentType.Dynamic.Lazy.List(
+                                        FadingEdgesScrollConfig.Dynamic(),
+                                        state
+                                    ),
+                                    FadingEdgesGravity.All,
+                                    96.dp
+                                )
+                            else Modifier
+                        ),
+                    verticalArrangement = Arrangement.Top,
                         horizontalAlignment = Alignment.CenterHorizontally,
                         contentPadding = PaddingValues(top = 100.dp, bottom = 100.dp),
                         state = state,
@@ -538,7 +552,6 @@ fun LyricsView(
                             }
                         }
                     }
-                }
 
                 if (showCopyDialog) {
                     AlertDialog(
@@ -868,6 +881,11 @@ fun WordSyncedLyricItem(
     }
 
 
+// How long a word keeps its animated state after it stops being the active
+// one, i.e. exactly as long as its fade-out takes.
+private const val WORD_FADE_OUT_MILLIS = 400L
+private const val WORD_INACTIVE_ALPHA = 0.4f
+
 @Composable
 fun AnimatedWord(
     wordText: String,
@@ -876,6 +894,38 @@ fun AnimatedWord(
     color: Color
 ) {
     val inactiveColor = color.copy(alpha = 0.55f)
+
+    // Only the active word runs a wipe, and only the ONE word that just stopped
+    // being active still has a fade left to finish. Every other word on screen
+    // is permanently in the same settled state -- yet each of them still built
+    // 3 Animatable + 2 LaunchedEffect + a derivedStateOf brush + a draw node
+    // that never changed. On a CJK line that is 20-40 words of pure overhead
+    // per visible line. Those now take a direct path to the same pixels.
+    var animating by remember { mutableStateOf(isActive) }
+    LaunchedEffect(isActive) {
+        if (isActive) {
+            animating = true
+        } else {
+            delay(WORD_FADE_OUT_MILLIS + 60)
+            animating = false
+        }
+    }
+
+    if (!animating) {
+        // Precisely the state the animated path settles on: wipeProgress 0,
+        // yOffset 0, and textAlpha faded to 0.4 with the SrcIn wipe suppressed.
+        Text(
+            text = wordText,
+            style = MaterialTheme.typography.titleLarge.copy(
+                fontWeight = FontWeight.SemiBold,
+                textMotion = TextMotion.Animated
+            ),
+            color = color,
+            modifier = Modifier.graphicsLayer { alpha = WORD_INACTIVE_ALPHA }
+        )
+        return
+    }
+
     val wipeProgress = remember { Animatable(0f) }
     val textAlpha = remember { Animatable(1f) }
 
@@ -894,8 +944,8 @@ fun AnimatedWord(
         } else {
             wipeProgress.snapTo(0f)
             textAlpha.animateTo(
-                targetValue = 0.4f,
-                animationSpec = tween(durationMillis = 400, easing = LinearEasing)
+                targetValue = WORD_INACTIVE_ALPHA,
+                animationSpec = tween(durationMillis = WORD_FADE_OUT_MILLIS.toInt(), easing = LinearEasing)
             )
         }
     }
@@ -1059,21 +1109,32 @@ fun SyncedLyricItem(
 }
 
 // Bouncing dots for interlude.
+/**
+ * Frame period for the interlude dots. They are three 8dp circles bobbing on a
+ * sine over a 6dp range, so 30 Hz is indistinguishable from the display rate
+ * while halving the frames the lyric tick used to request at 60-120 Hz.
+ */
+private const val INTERLUDE_FRAME_MS = 33L
+
 @Composable
 fun InterludeIndicator(
     color: Color,
     modifier: Modifier = Modifier
 ) {
-    val infiniteTransition = rememberInfiniteTransition(label = "wave_master")
-    val phase by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 2f * Math.PI.toFloat(),
-        animationSpec = infiniteRepeatable(
-            animation = tween(1200, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "phase"
-    )
+    // Was `rememberInfiniteTransition`, which is bound to the display frame
+    // clock and therefore ran at the full 60-120 Hz even though the motion is a
+    // slow three-dot sine. Driving the phase from a fixed 30 Hz ticker keeps the
+    // same animation and decouples it from the refresh rate.
+    var phase by remember { mutableFloatStateOf(0f) }
+    LaunchedEffect(Unit) {
+        val step = 2f * Math.PI.toFloat() * INTERLUDE_FRAME_MS / 1200f
+        while (true) {
+            delay(INTERLUDE_FRAME_MS)
+            phase = (phase + step) % (2f * Math.PI.toFloat())
+        }
+    }
+
+    val currentPhase = phase
 
     Row(
         modifier = modifier
@@ -1082,9 +1143,9 @@ fun InterludeIndicator(
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Dot(color, phase, 0)
-        Dot(color, phase, 1)
-        Dot(color, phase, 2)
+        Dot(color, currentPhase, 0)
+        Dot(color, currentPhase, 1)
+        Dot(color, currentPhase, 2)
     }
 }
 

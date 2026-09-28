@@ -31,6 +31,13 @@ class ChoraApplication : Application(), ImageLoaderFactory {
         // Feed the dock's output-device chip with the newest other-device
         // progress so its ring is meaningful without opening the device sheet.
         com.craftworks.music.managers.PlaybackHandoffManager.startAmbientPolling()
+        // TEMP(debug only): attribute the playing-state CPU to a call path.
+        // R8 strips this in release because `enabled` is a compile-time false.
+        if (com.craftworks.music.util.MainThreadSampler.enabled) {
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                com.craftworks.music.util.MainThreadSampler.start(seconds = 12)
+            }, 20_000L)
+        }
     }
 
     override fun newImageLoader(): ImageLoader {

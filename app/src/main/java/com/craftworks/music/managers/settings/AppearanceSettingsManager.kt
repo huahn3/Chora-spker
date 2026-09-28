@@ -80,6 +80,7 @@ class AppearanceSettingsManager @Inject constructor(
         private val LYRICS_AUTOSCROLL = booleanPreferencesKey("lyrics_auto_scroll")
         private val LYRICS_RECENTER_AFTER_SCROLL = booleanPreferencesKey("lyrics_recenter_after_Scroll")
         private val USE_REFRESH_ANIMATION = booleanPreferencesKey("use_refresh_animation")
+        private val LYRICS_FADING_EDGES = booleanPreferencesKey("lyrics_fading_edges")
         private val SHOW_TRACK_NUMBERS = booleanPreferencesKey("show_track_numbers")
 
         private val OLED_PROTECTION_MODE = stringPreferencesKey("oled_protection")
@@ -266,6 +267,25 @@ class AppearanceSettingsManager @Inject constructor(
         withContext(NonCancellable) {
             context.dataStore.edit { preferences ->
                 preferences[USE_REFRESH_ANIMATION] = useRefreshAnimation
+            }
+        }
+    }
+
+    /**
+     * The lyrics' top/bottom edge fade. The effect itself is unchanged, but the
+     * third-party implementation rebuilds its gradient brushes on the render
+     * thread every frame, which is the largest remaining GPU cost on the lyrics
+     * screen. Exposed as a switch so the look can be A/B'd against a plain
+     * hard cut without anyone having to rebuild.
+     */
+    val lyricsFadingEdgesFlow: Flow<Boolean> = context.dataStore.data.map { preferences ->
+        preferences[LYRICS_FADING_EDGES] ?: true
+    }.distinctUntilChanged()
+
+    suspend fun setLyricsFadingEdges(enabled: Boolean) {
+        withContext(NonCancellable) {
+            context.dataStore.edit { preferences ->
+                preferences[LYRICS_FADING_EDGES] = enabled
             }
         }
     }

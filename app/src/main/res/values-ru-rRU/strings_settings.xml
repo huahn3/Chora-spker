@@ -11,6 +11,7 @@
     <string name="Setting_NavidromeLogo">Отображать Navidrome Лого На Главном Экране</string>
     <string name="Setting_ProviderDividers">Разделять Разные Медиа-провайдеры</string>
     <string name="Setting_RefreshAnimation">Показывать Анимацию Обновления</string>
+    <string name="Setting_LyricsFadingEdges">Затухание краёв текста песни</string>
     <string name="Setting_LyricsAnimationSpeed">Скорость Анимации Субтитров</string>
     <string name="Setting_LyricsAutoscroll">Автоматически Скроллить Стандартные Субтитры</string>
     <string name="Setting_LyricsRecenter">Поставить По Центру После Скролла</string>

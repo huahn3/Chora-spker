@@ -12,6 +12,7 @@
         <string name="Setting_NavidromeLogo">Show Navidrome Logo</string>
         <string name="Setting_ProviderDividers">Show Provider Dividers</string>
         <string name="Setting_RefreshAnimation">Show Refresh Animation</string>
+        <string name="Setting_LyricsFadingEdges">Lyrics Edge Fade</string>
         <string name="Setting_LyricsAnimationSpeed">Lyrics Animation Speed</string>
         <string name="Setting_LyricsAutoscroll">Autoscroll Plain Lyrics</string>
         <string name="Setting_LyricsRecenter">Recenter After Scroll</string>
